@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>酸碱滴定实验 · 3D 动画演示</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:100%;height:100%;overflow:hidden;background:#070b16;}
+  body{
+    font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+    color:#e8f0ff;-webkit-font-smoothing:antialiased;
+  }
+  canvas{display:block;}
+
+  /* 左下角说明面板 */
+  #panel{
+    position:fixed;left:24px;bottom:24px;
+    width:min(460px,calc(100vw - 48px));
+    padding:18px 22px 16px;
+    border-radius:16px;
+    background:rgba(14,22,42,.74);
+    border:1px solid rgba(110,170,255,.25);
+    backdrop-filter:blur(14px);
+    -webkit-backdrop-filter:blur(14px);
+    box-shadow:0 16px 48px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+    transition:opacity .35s ease;
+  }
+  #stepTitle{
+    font-size:19px;font-weight:700;letter-spacing:.5px;
+    color:#78d4ff;margin-bottom:9px;
+    text-shadow:0 0 18px rgba(90,190,255,.45);
+  }
+  #stepDesc{
+    font-size:14px;line-height:1.8;color:#c3d5ef;
+    min-height:88px;
+  }
+  #barWrap{
+    margin-top:14px;height:5px;border-radius:4px;
+    background:rgba(255,255,255,.09);overflow:hidden;
+  }
+  #bar{
+    height:100%;width:0;border-radius:4px;
+    background:linear-gradient(90deg,#38a8ff,#a06bff,#ff5fb0);
+    box-shadow:0 0 12px rgba(120,160,255,.8);
+    transition:width .12s linear;
+  }
+  #dots{
+    position:fixed;left:24px;top:24px;
+    display:flex;gap:8px;align-items:center;
+  }
+  .dot{
+    width:9px;height:9px;border-radius:50%;
+    background:rgba(255,255,255,.18);
+    transition:all .3s ease;
+  }
+  .dot.active{
+    background:#5fc8ff;width:26px;border-radius:5px;
+    box-shadow:0 0 14px rgba(95,200,255,.9);
+  }
+  .dot.done{background:rgba(95,200,255,.45);}
+
+  /* 右上角按钮 */
+  #tools{
+    position:fixed;right:24px;top:24px;
+    display:flex;gap:10px;
+  }
+  #tools button{
+    padding:9px 18px;border-radius:10px;cursor:pointer;
+    font-size:13.5px;font-family:inherit;letter-spacing:.5px;
+    color:#cfe4ff;background:rgba(20,32,58,.8);
+    border:1px solid rgba(110,170,255,.3);
+    backdrop-filter:blur(10px);
+    transition:all .22s ease;
+  }
+  #tools button:hover{
+    background:rgba(40,80,150,.9);
+    border-color:rgba(120,200,255,.75);
+    color:#fff;box-shadow:0 0 20px rgba(80,170,255,.45);
+  }
+  #tools button:active{transform:scale(.95);}
+
+  #hint{
+    position:fixed;right:24px;bottom:26px;
+    font-size:12px;color:rgba(160,190,230,.55);
+    letter-spacing:.6px;
+  }
+  @media (max-width:640px){
+    #panel{left:12px;right:12px;bottom:12px;width:auto;padding:14px 16px;}
+    #stepDesc{font-size:13px;min-height:78px;}
+    #stepTitle{font-size:16px;}
+    #tools{right:12px;top:12px;}
+    #tools button{padding:7px 13px;font-size:12px;}
+    #dots{left:12px;top:16px;}
+    #hint{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<div id="dots"></div>
+
+<div id="tools">
+  <button id="btnPause">⏸ 暂停</button>
+  <button id="btnReset">↻ 重新播放</button>
+</div>
+
+<div id="panel">
+  <div id="stepTitle">① 认识实验装置</div>
+  <div id="stepDesc">加载中…</div>
+  <div id="barWrap"><div id="bar"></div></div>
+</div>
+
+<div id="hint">拖动旋转视角 · 滚轮缩放</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ============================================================
+   1. 基础环境
+   ============================================================ */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputEncoding = THREE.sRGBEncoding;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070b16);
+scene.fog = new THREE.FogExp2(0x070b16, 0.028);
+
+const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 200);
+
+/* ---------- 摄像机轨道控制 ---------- */
+const camState = {
+  theta: 0.62,
+  phi: 1.24,
+  radius: 8.0,
+  target: new THREE.Vector3(0, 1.62, 0)
+};
+function updateCamera() {
+  const s = camState;
+  const sp = Math.sin(s.phi), cp = Math.cos(s.phi);
+  camera.position.set(
+    s.target.x + s.radius * sp * Math.sin(s.theta),
+    s.target.y + s.radius * cp,
+    s.target.z + s.radius * sp * Math.cos(s.theta)
+  );
+  camera.lookAt(s.target);
+}
+updateCamera();
+
+let dragging = false, lastX = 0, lastY = 0;
+renderer.domElement.addEventListener('pointerdown', e => {
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  renderer.domElement.style.cursor = 'grabbing';
+});
+window.addEventListener('pointerup', () => {
+  dragging = false;
+  renderer.domElement.style.cursor = 'grab';
+});
+window.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastX, dy = e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  camState.theta -= dx * 0.006;
+  camState.phi   -= dy * 0.005;
+  camState.phi = Math.max(0.32, Math.min(1.54, camState.phi));
+});
+renderer.domElement.addEventListener('wheel', e => {
+  e.preventDefault();
+  camState.radius = Math.max(4.2, Math.min(16, camState.radius + e.deltaY * 0.006));
+}, { passive: false });
+renderer.domElement.style.cursor = 'grab';
+
+/* ============================================================
+   2. 灯光
+   ============================================================ */
+scene.add(new THREE.HemisphereLight(0x9cc4ff, 0x0a1020, 0.95));
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.15);
+keyLight.position.set(5, 9, 6);
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0x5c9dff, 0.7);
+fillLight.position.set(-6, 3.5, -5);
+scene.add(fillLight);
+
+const rimLight = new THREE.DirectionalLight(0xff6fc0, 0.5);
+rimLight.position.set(0, 2, -8);
+scene.add(rimLight);
+
+const spot = new THREE.PointLight(0x66ccff, 0.9, 12, 2);
+spot.position.set(0, 3.6, 1.4);
+scene.add(spot);
+
+/* ============================================================
+   3. 场景道具：实验台
+   ============================================================ */
+const tableMat = new THREE.MeshStandardMaterial({
+  color: 0x1a2540, roughness: 0.82, metalness: 0.25
+});
+const table = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 0.16, 72), tableMat);
+table.position.y = -0.08;
+scene.add(table);
+
+const tableGlow = new THREE.Mesh(
+  new THREE.RingGeometry(2.6, 3.35, 72),
+  new THREE.MeshBasicMaterial({ color: 0x2b6bd8, transparent: true, opacity: 0.16, side: THREE.DoubleSide })
+);
+tableGlow.rotation.x = -Math.PI / 2;
+tableGlow.position.y = 0.005;
+scene.add(tableGlow);
+
+/* ============================================================
+   4. 玻璃材质
+   ============================================================ */
+const glassMat = new THREE.MeshPhongMaterial({
+  color: 0xbfe2ff,
+  transparent: true,
+  opacity: 0.16,
+  shininess: 130,
+  specular: 0xffffff,
+  side: THREE.DoubleSide,
+  depthWrite: false
+});
+
+/* ============================================================
+   5. 锥形瓶
+   ============================================================ */
+const flaskProfile = [
+  [0.00, 0.00], [0.90, 0.00], [1.00, 0.09], [1.00, 0.22],
+  [0.38, 1.28], [0.36, 1.36], [0.36, 1.74], [0.41, 1.77]
+].map(p => new THREE.Vector2(p[0], p[1]));
+
+const flask = new THREE.Mesh(new THREE.LatheGeometry(flaskProfile, 72), glassMat);
+flask.renderOrder = 3;
+scene.add(flask);
+
+/* ---------- 瓶内液体（几何随液面高度动态重建） ---------- */
+const colorlessCol = new THREE.Color(0xdcefff);
+const pinkCol      = new THREE.Color(0xff3f96);
+
+const liquidMat = new THREE.MeshPhongMaterial({
+  color: colorlessCol.clone(),
+  transparent: true,
+  opacity: 0.45,
+  shininess: 95,
+  specular: 0xffffff,
+  side: THREE.DoubleSide,
+  depthWrite: false
+});
+
+function buildLiquidGeometry(level) {
+  const y0 = 0.22, r0 = 0.94, y1 = 1.28, r1 = 0.34;
+  const rAt = y => r0 + (r1 - r0) * (y - y0) / (y1 - y0);
+
+  const pts = [];
+  pts.push(new THREE.Vector2(0.00, 0.02));
+  pts.push(new THREE.Vector2(0.88, 0.02));
+  pts.push(new THREE.Vector2(0.88, 0.16));
+  pts.push(new THREE.Vector2(0.92, 0.22));
+
+  const top = Math.max(level, 0.25);
+  const N = 12;
+  for (let i = 1; i <= N; i++) {
+    const y = 0.22 + (top - 0.22) * i / N;
+    pts.push(new THREE.Vector2(rAt(y) - 0.022, y));
+  }
+  pts.push(new THREE.Vector2(0.00, top));
+
+  return new THREE.LatheGeometry(pts, 48);
+}
+
+let liquidMesh = new THREE.Mesh(buildLiquidGeometry(0.5), liquidMat);
+liquidMesh.renderOrder = 1;
+liquidMesh.visible = false;
+scene.add(liquidMesh);
+
+let lastFlaskLevel = -1;
+function setFlaskLevel(level) {
+  if (level < 0.28) { liquidMesh.visible = false; return; }
+  liquidMesh.visible = true;
+  if (Math.abs(level - lastFlaskLevel) < 0.002) return;
+  lastFlaskLevel = level;
+  const g = buildLiquidGeometry(level);
+  liquidMesh.geometry.dispose();
+  liquidMesh.geometry = g;
+}
+
+function setPinkness(v) {
+  liquidMat.color.copy(colorlessCol).lerp(pinkCol, v);
+  liquidMat.opacity = 0.44 + 0.4 * v;
+}
+
+/* ============================================================
+   6. 滴定管
+   ============================================================ */
+const BUR_BOTTOM = 2.05;   // 玻璃管下端
+const BUR_TOP    = 3.75;   // 玻璃管上端
+
+// 管身（开口圆柱，双面显示）
+const buretteTube = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.10, 0.10, 1.70, 36, 1, true),
+  glassMat
+);
+buretteTube.position.y = (BUR_BOTTOM + BUR_TOP) / 2;
+buretteTube.renderOrder = 4;
+scene.add(buretteTube);
+
+// 尖嘴
+const tip = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.10, 0.024, 0.19, 28, 1, true),
+  glassMat
+);
+tip.position.y = 1.955;
+tip.renderOrder = 4;
+scene.add(tip);
+
+// 管口环
+const mouthRing = new THREE.Mesh(
+  new THREE.TorusGeometry(0.10, 0.016, 8, 36),
+  new THREE.MeshPhongMaterial({ color: 0xbfe2ff, transparent: true, opacity: 0.45, shininess: 120 })
+);
+mouthRing.rotation.x = Math.PI / 2;
+mouthRing.position.y = BUR_TOP;
+mouthRing.renderOrder = 4;
+scene.add(mouthRing);
+
+// 管内液柱
+const buretteLiquidMat = new THREE.MeshPhongMaterial({
+  color: 0xbfe8ff, transparent: true, opacity: 0.72,
+  shininess: 120, specular: 0xffffff, depthWrite: false
+});
+const buretteLiquid = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.076, 0.076, 1, 28, 1, false),
+  buretteLiquidMat
+);
+buretteLiquid.renderOrder = 2;
+scene.add(buretteLiquid);
+
+// 尖嘴内的一小段液体
+const tipLiquid = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.024, 0.012, 0.17, 16),
+  buretteLiquidMat
+);
+tipLiquid.position.y = 1.955;
+tipLiquid.visible = false;
+tipLiquid.renderOrder = 2;
+scene.add(tipLiquid);
+
+function setBuretteLevel(topY) {
+  const h = Math.max(0.001, topY - BUR_BOTTOM);
+  buretteLiquid.scale.y = h;
+  buretteLiquid.position.y = BUR_BOTTOM + h / 2;
+  tipLiquid.visible = h > 0.05;
+}
+
+/* ============================================================
+   7. 铁架台
+   ============================================================ */
+const metalMat = new THREE.MeshStandardMaterial({
+  color: 0x8fa3bb, roughness: 0.34, metalness: 0.85
+});
+
+const standBase = new THREE.Mesh(new THREE.BoxGeometry(0.95, 0.09, 0.72), metalMat);
+standBase.position.set(-1.75, 0.045, 0);
+scene.add(standBase);
+
+const standRod = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 4.05, 18), metalMat);
+standRod.position.set(-1.75, 2.02, 0);
+scene.add(standRod);
+
+const standArm = new THREE.Mesh(new THREE.CylinderGeometry(0.038, 0.038, 1.65, 14), metalMat);
+standArm.rotation.z = Math.PI / 2;
+standArm.position.set(-0.93, 3.18, 0);
+scene.add(standArm);
+
+const clampRing = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.028, 8, 28), metalMat);
+clampRing.rotation.x = Math.PI / 2;
+clampRing.position.set(0, 3.18, 0);
+scene.add(clampRing);
+
+/* ============================================================
+   8. 液滴 & 涟漪
+   ============================================================ */
+const DROP_START_Y = 1.86;
+const dropMat = new THREE.MeshPhongMaterial({
+  color: 0xcfeaff, transparent: true, opacity: 0.92,
+  shininess: 130, specular: 0xffffff
+});
+const dropGeo = new THREE.SphereGeometry(0.045, 14, 14);
+
+const drops = [];
+const ripples = [];
+let dropTimer = 0.35;
+
+function spawnDrop() {
+  const m = new THREE.Mesh(dropGeo, dropMat);
+  m.position.set(0, DROP_START_Y, 0);
+  m.scale.set(1, 1.25, 1);
+  scene.add(m);
+  drops.push({ mesh: m, vy: 0 });
+}
+
+function spawnRipple(y) {
+  const g = new THREE.RingGeometry(0.03, 0.062, 28);
+  g.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshBasicMaterial({
+    color: 0xbfe6ff, transparent: true, opacity: 0.7,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+  const m = new THREE.Mesh(g, mat);
+  m.position.set(0, y + 0.006, 0);
+  scene.add(m);
+  ripples.push({ mesh: m, t: 0 });
+}
+
+function updateDrops(dt, rate) {
+  if (playing && rate > 0) {
+    dropTimer -= dt;
+    if (dropTimer <= 0) { spawnDrop(); dropTimer = rate; }
+  } else if (rate === 0) {
+    dropTimer = 0.35;
+  }
+
+  for (let i = drops.length - 1; i >= 0; i--) {
+    const d = drops[i];
+    d.vy -= 6.2 * dt;
+    d.mesh.position.y += d.vy * dt;
+    if (d.mesh.position.y <= flaskLevel) {
+      scene.remove(d.mesh);
+      drops.splice(i, 1);
+      spawnRipple(flaskLevel);
+    }
+  }
+
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const r = ripples[i];
+    r.t += dt;
+    const k = r.t / 0.55;
+    r.mesh.scale.setScalar(1 + k * 5.5);
+    r.mesh.material.opacity = Math.max(0, 0.7 * (1 - k));
+    if (k >= 1) {
+      scene.remove(r.mesh);
+      r.mesh.geometry.dispose();
+      r.mesh.material.dispose();
+      ripples.splice(i, 1);
+    }
+  }
+}
+
+/* ============================================================
+   9. 动画状态与时间轴
+   ============================================================ */
+const steps = [
+  {
+    title: "① 认识实验装置",
+    desc: "本实验用已知浓度的 NaOH 标准溶液，滴定未知浓度的盐酸。上方为酸式滴定管，下方锥形瓶内盛放待测盐酸，并加入酚酞作指示剂。",
+    dur: 7
+  },
+  {
+    title: "② 装入 NaOH 标准溶液",
+    desc: "把 NaOH 标准溶液注入滴定管。注意：必须排尽尖嘴处的气泡，否则会造成体积读数偏大，使结果产生误差。",
+    dur: 7
+  },
+  {
+    title: "③ 加入待测盐酸与指示剂",
+    desc: "用移液管准确量取一定体积的待测盐酸注入锥形瓶，滴入 2～3 滴酚酞试液。酚酞在酸性溶液中呈无色。",
+    dur: 7
+  },
+  {
+    title: "④ 调节液面至零刻度",
+    desc: "调整滴定管内液面至 0 刻度附近，记录初读数 V₁。读数时视线要与凹液面最低处相平，精确到 0.01 mL。",
+    dur: 6
+  },
+  {
+    title: "⑤ 开始滴定",
+    desc: "左手控制活塞，右手不断摇动锥形瓶，逐滴加入 NaOH 溶液。此时瓶内溶液仍为无色，说明盐酸尚未被完全中和。",
+    dur: 12
+  },
+  {
+    title: "⑥ 接近滴定终点",
+    desc: "随着 NaOH 不断加入，液滴落点处出现局部粉红色，摇动后又很快消失——这说明已接近终点，应放慢滴速，改为半滴半滴地加入。",
+    dur: 12
+  },
+  {
+    title: "⑦ 到达滴定终点",
+    desc: "当滴入最后半滴 NaOH 后，溶液变成浅粉红色，且半分钟内不褪色，即到达滴定终点。记录末读数 V₂。",
+    dur: 8
+  },
+  {
+    title: "⑧ 数据处理",
+    desc: "c(HCl) = c(NaOH) × V(NaOH) ÷ V(HCl)。重复滴定 2～3 次，取平均值，即可算出待测盐酸的物质的量浓度。",
+    dur: 10
+  }
+];
+
+let stepIndex = 0;
+let stepTime = 0;
+let playing = true;
+let speed = 1;
+let dropRate = 0;
+
+// 被动画驱动的状态量
+let buretteTop = 2.06;
+let flaskLevel = 0;
+let pinkness = 0;
+
+const smooth = t => t * t * (3 - 2 * t);
+
+function updateScene(index, p) {
+  const e = smooth(p);
+
+  switch (index) {
+    case 0: // 认识装置
+      buretteTop = 2.06;
+      flaskLevel = 0;
+      pinkness = 0;
+      break;
+
+    case 1: // 装 NaOH
+      buretteTop = 2.06 + (3.68 - 2.06) * e;
+      flaskLevel = 0;
+      pinkness = 0;
+      break;
+
+    case 2: // 加盐酸 + 酚酞
+      buretteTop = 3.68;
+      flaskLevel = 0.62 * e;
+      pinkness = 0;
+      break;
+
+    case 3: // 调零
+      buretteTop = 3.68 - 0.12 * e;
+      flaskLevel = 0.62;
+      pinkness = 0;
+      break;
+
+    case 4: // 开始滴定
+      buretteTop = 3.56 - 0.35 * e;
+      flaskLevel = 0.62 + 0.06 * e;
+      pinkness = 0;
+      break;
+
+    case 5: // 接近终点（局部粉红，摇动又褪去）
+      buretteTop = 3.21 - 0.25 * e;
+      flaskLevel = 0.68 + 0.05 * e;
+      pinkness = 0.35 * p * (0.70 + 0.30 * Math.sin(p * Math.PI * 5));
+      break;
+
+    case 6: // 终点
+      buretteTop = 2.96;
+      flaskLevel = 0.73;
+      pinkness = 0.30 + 0.58 * smooth(Math.min(1, p * 1.5));
+      break;
+
+    case 7: // 数据处理
+      buretteTop = 2.96;
+      flaskLevel = 0.73;
+      pinkness = 0.88;
+      break;
+  }
+
+  setBuretteLevel(buretteTop);
+  setFlaskLevel(flaskLevel);
+  setPinkness(pinkness);
+
+  dropRate = (index === 4) ? 0.95 : (index === 5 ? 1.5 : 0);
+}
+
+/* ============================================================
+   10. HUD
+   ============================================================ */
+const elTitle = document.getElementById('stepTitle');
+const elDesc  = document.getElementById('stepDesc');
+const elBar   = document.getElementById('bar');
+const elDots  = document.getElementById('dots');
+
+steps.forEach(() => {
+  const d = document.createElement('div');
+  d.className = 'dot';
+  elDots.appendChild(d);
+});
+const dotEls = Array.from(elDots.children);
+
+function updateHUD() {
+  const s = steps[stepIndex];
+  elTitle.textContent = s.title;
+  elDesc.textContent = s.desc;
+  dotEls.forEach((d, i) => {
+    d.className = 'dot' + (i === stepIndex ? ' active' : (i < stepIndex ? ' done' : ''));
+  });
+}
+
+function resetAll() {
+  stepIndex = 0;
+  stepTime = 0;
+  playing = true;
+  buretteTop = 2.06;
+  flaskLevel = 0;
+  pinkness = 0;
+  dropRate = 0;
+  dropTimer = 0.35;
+  drops.forEach(d => scene.remove(d.mesh));
+  drops.length = 0;
+  ripples.forEach(r => { scene.remove(r.mesh); r.mesh.geometry.dispose(); r.mesh.material.dispose(); });
+  ripples.length = 0;
+  lastFlaskLevel = -1;
+  document.getElementById('btnPause').textContent = '⏸ 暂停';
+  updateHUD();
+}
+
+document.getElementById('btnPause').addEventListener('click', function () {
+  playing = !playing;
+  this.textContent = playing ? '⏸ 暂停' : '▶ 播放';
+});
+document.getElementById('btnReset').addEventListener('click', resetAll);
+
+/* ============================================================
+   11. 主循环
+   ============================================================ */
+const clock = new THREE.Clock();
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const dt = Math.min(clock.getDelta(), 0.05);
+
+  if (playing) {
+    stepTime += dt * speed;
+    // 推进步骤
+    while (stepIndex < steps.length - 1 && stepTime >= steps[stepIndex].dur) {
+      stepTime -= steps[stepIndex].dur;
+      stepIndex++;
+      updateHUD();
+    }
+    // 最后一步播完则停止
+    if (stepIndex === steps.length - 1 && stepTime >= steps[stepIndex].dur) {
+      stepTime = steps[stepIndex].dur;
+      playing = false;
+      document.getElementById('btnPause').textContent = '▶ 播放';
+    }
+  }
+
+  const step = steps[stepIndex];
+  const p = Math.min(1, stepTime / step.dur);
+
+  updateScene(stepIndex, p);
+  updateDrops(dt, dropRate);
+  updateCamera();
+
+  // 进度条
+  const totalProgress = (stepIndex + p) / steps.length;
+  elBar.style.width = (totalProgress * 100).toFixed(2) + '%';
+
+  renderer.render(scene, camera);
+}
+
+/* ============================================================
+   12. 尺寸自适应
+   ============================================================ */
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ============================================================
+   启动
+   ============================================================ */
+updateHUD();
+animate();
+</script>
+</body>
+</html>
