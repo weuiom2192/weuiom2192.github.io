@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>3D 电场模拟</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #05070f; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas { display: block; cursor: crosshair; }
+
+  #panel {
+    position: fixed; top: 18px; left: 18px; z-index: 10;
+    width: 236px; padding: 14px 16px;
+    background: rgba(14, 20, 36, 0.72);
+    border: 1px solid rgba(90, 150, 255, 0.25);
+    border-radius: 14px;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    color: #c8d8f0; user-select: none;
+  }
+  #panel h1 {
+    font-size: 14px; font-weight: 600; letter-spacing: .5px;
+    color: #eaf2ff; margin-bottom: 11px; display: flex; align-items: center; gap: 7px;
+  }
+  #panel h1::before {
+    content: ''; width: 8px; height: 8px; border-radius: 50%;
+    background: #4a86ff; box-shadow: 0 0 10px #4a86ff;
+  }
+  .row { display: flex; gap: 8px; margin-bottom: 8px; }
+  button {
+    flex: 1; padding: 8px 6px; font-size: 12.5px; font-family: inherit;
+    border-radius: 9px; cursor: pointer; transition: all .15s ease;
+    border: 1px solid rgba(90, 150, 255, 0.3);
+    background: rgba(40, 60, 110, 0.5);
+    color: #b9cdea;
+  }
+  button:hover { background: rgba(60, 90, 160, 0.75); color: #fff; }
+  button.active {
+    background: linear-gradient(180deg, #3a6bd8, #2a4fae);
+    border-color: #5b8cf0; color: #fff;
+    box-shadow: 0 0 14px rgba(80, 140, 255, .55);
+  }
+  button.neg.active {
+    background: linear-gradient(180deg, #2f7fd8, #1f5aa8);
+    border-color: #4b9cf0; box-shadow: 0 0 14px rgba(60, 150, 255, .55);
+  }
+  .stat {
+    font-size: 11.5px; color: #7f93b8; margin: 2px 0 8px;
+    display: flex; justify-content: space-between;
+  }
+  .stat b { color: #ff5f85; font-weight: 600; }
+  .stat i { color: #4d9dff; font-style: normal; font-weight: 600; }
+  .hint {
+    font-size: 11.5px; line-height: 1.75; color: #7a8db0;
+    margin-top: 10px; padding-top: 9px;
+    border-top: 1px solid rgba(90, 150, 255, .15);
+  }
+  label.chk {
+    display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+    color: #b9cdea; cursor: pointer; padding: 8px 4px;
+  }
+  input[type=checkbox] { accent-color: #4a86ff; cursor: pointer; width: 14px; height: 14px; }
+</style>
+</head>
+<body>
+
+<div id="panel">
+  <h1>3D 电场模拟</h1>
+
+  <div class="row">
+    <button id="btnPos" class="active">＋ 正电荷</button>
+    <button id="btnNeg" class="neg">－ 负电荷</button>
+  </div>
+
+  <div class="row">
+    <button id="btnClear">清空全部</button>
+  </div>
+
+  <div class="row" style="margin-bottom:4px;">
+    <label class="chk"><input type="checkbox" id="chkLines" checked> 显示电场线</label>
+  </div>
+
+  <div class="stat">
+    <span>正电荷 <b id="cntPos">0</b></span>
+    <span>负电荷 <i id="cntNeg">0</i></span>
+  </div>
+
+  <div class="hint">
+    左键点击地面 → 放置电荷<br>
+    拖动电荷 → 移动位置<br>
+    右键点击电荷 → 删除<br>
+    拖动空白处 → 旋转视角 · 滚轮缩放
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+/* ============================================================
+   基础场景
+   ============================================================ */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x05070f);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 2000);
+camera.position.set(11, 13, 17);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.075;
+controls.maxPolarAngle = Math.PI * 0.495;   // 不让相机钻到地面下方
+controls.minDistance = 3;
+controls.maxDistance = 75;
+controls.target.set(0, 0, 0);
+
+/* 灯光 */
+scene.add(new THREE.AmbientLight(0x8fa4cc, 1.4));
+const keyLight = new THREE.DirectionalLight(0xffffff, 1.6);
+keyLight.position.set(12, 22, 12);
+scene.add(keyLight);
+const rimLight = new THREE.DirectionalLight(0x3355ff, 0.8);
+rimLight.position.set(-14, -6, -12);
+scene.add(rimLight);
+
+/* 地面网格 */
+const grid = new THREE.GridHelper(30, 30, 0x2a4a7a, 0x13253f);
+grid.material.transparent = true;
+grid.material.opacity = 0.6;
+scene.add(grid);
+
+/* 中心标记环 */
+const ringGeo = new THREE.RingGeometry(0.55, 0.62, 48);
+const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
+  color: 0x2d5f9e, transparent: true, opacity: 0.5, side: THREE.DoubleSide
+}));
+ring.rotation.x = -Math.PI / 2;
+ring.position.y = 0.002;
+scene.add(ring);
+
+/* ============================================================
+   电荷数据
+   ============================================================ */
+const charges = [];      // { q, pos(Vector3=mesh.position), mesh }
+const fieldGroup = new THREE.Group();
+scene.add(fieldGroup);
+
+const PLACE_RANGE = 13;                 // 地面可放置半径（方形）
+const placePlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+let placeQ = 1;            // 当前放置的电荷正负
+let showLines = true;
+let fieldDirty = true;
+let lastRebuild = 0;
+const REBUILD_INTERVAL = 70;   // 拖动时电场线重建节流（毫秒）
+
+/* ---------- 创建电荷外观 ---------- */
+function createChargeMesh(q) {
+  const r = 0.32 * Math.cbrt(Math.abs(q));
+  const color = q > 0 ? 0xff3366 : 0x3399ff;
+
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(r, 32, 24),
+    new THREE.MeshStandardMaterial({
+      color,
+      emissive: color,
+      emissiveIntensity: 0.95,
+      roughness: 0.3,
+      metalness: 0.15
+    })
+  );
+
+  // 光晕
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(r * 2.4, 20, 16),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.12,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  sphere.add(halo);
+
+  sphere.userData.radius = r;
+  return sphere;
+}
+
+function addCharge(pos, q) {
+  const mesh = createChargeMesh(q);
+  mesh.position.copy(pos);
+  scene.add(mesh);
+
+  charges.push({ q, pos: mesh.position, mesh });
+  fieldDirty = true;
+  updateStats();
+  return charges[charges.length - 1];
+}
+
+function removeCharge(target) {
+  const i = charges.indexOf(target);
+  if (i < 0) return;
+  scene.remove(target.mesh);
+  target.mesh.geometry.dispose();
+  target.mesh.material.dispose();
+  charges.splice(i, 1);
+  fieldDirty = true;
+  updateStats();
+}
+
+function clearAll() {
+  while (charges.length) removeCharge(charges[0]);
+}
+
+function updateStats() {
+  let p = 0, n = 0;
+  for (const c of charges) c.q > 0 ? p++ : n++;
+  document.getElementById('cntPos').textContent = p;
+  document.getElementById('cntNeg').textContent = n;
+}
+
+/* ============================================================
+   电场计算  E = Σ k*q*(r-ri)/|r-ri|^3
+   ============================================================ */
+const _v = new THREE.Vector3();
+
+function fieldAt(p, out) {
+  out.set(0, 0, 0);
+  for (let i = 0; i < charges.length; i++) {
+    const c = charges[i];
+    _v.subVectors(p, c.pos);
+    const d2 = _v.lengthSq() + 0.012;          // 软化，避免奇点
+    const inv = c.q / (d2 * Math.sqrt(d2));
+    out.addScaledVector(_v, inv);
+  }
+  return out;
+}
+
+/* Fibonacci 球面均匀取点 */
+function fibonacciSphere(n) {
+  const pts = [];
+  const ga = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < n; i++) {
+    const y = n === 1 ? 0 : 1 - (i / (n - 1)) * 2;
+    const r = Math.sqrt(Math.max(0, 1 - y * y));
+    const th = ga * i;
+    pts.push(new THREE.Vector3(Math.cos(th) * r, y, Math.sin(th) * r));
+  }
+  return pts;
+}
+
+/* ============================================================
+   场线重建（数值积分追踪）
+   ============================================================ */
+const E_TMP = new THREE.Vector3();
+const COL_A = new THREE.Color();
+const COL_B = new THREE.Color();
+
+function colorForMag(s, out) {
+  // 场强 → 蓝(弱) → 紫 → 粉(强)
+  const t = Math.min(1, Math.log10(1 + s * 5) / 2.2);
+  out.setHSL(0.57 + 0.36 * t, 0.95, 0.40 + 0.30 * t);
+  return out;
+}
+
+function rebuildFieldLines() {
+  // 清理旧对象
+  for (const obj of fieldGroup.children.slice()) {
+    obj.geometry.dispose();
+    obj.material.dispose();
+    fieldGroup.remove(obj);
+  }
+  if (!showLines || charges.length === 0) return;
+
+  const anyPositive = charges.some(c => c.q > 0);
+  const sign = anyPositive ? 1 : -1;                     // 有正电荷就正向追踪
+  const sources = anyPositive ? charges.filter(c => c.q > 0) : charges;
+
+  // 控制总线条数量
+  const perSource = Math.max(6, Math.min(18, Math.round(72 / sources.length)));
+
+  const positions = [];
+  const colors = [];
+
+  const STEP = 0.16;
+  const MAX_STEPS = 550;
+  const BOUND = 26;
+
+  for (const src of sources) {
+    const dirs = fibonacciSphere(perSource);
+    const r0 = (src.mesh.userData.radius || 0.32) * 1.25;
+
+    for (const d of dirs) {
+      const p = src.pos.clone().addScaledVector(d, r0);
+      const prev = new THREE.Vector3();
+
+      fieldAt(p, E_TMP);
+      let mag = E_TMP.length();
+      colorForMag(mag, COL_A);
+
+      for (let step = 0; step < MAX_STEPS; step++) {
+        if (mag < 1e-10) break;
+
+        prev.copy(p);
+        p.addScaledVector(E_TMP, (sign * STEP) / mag);
+
+        fieldAt(p, E_TMP);
+        mag = E_TMP.length();
+        colorForMag(mag, COL_B);
+
+        positions.push(prev.x, prev.y, prev.z, p.x, p.y, p.z);
+        colors.push(COL_A.r, COL_A.g, COL_A.b, COL_B.r, COL_B.g, COL_B.b);
+        COL_A.copy(COL_B);
+
+        // —— 终止条件 ——
+        let hitCharge = false;
+        for (const c of charges) {
+          const rr = (c.mesh.userData.radius || 0.32) * 1.05;
+          if (p.distanceToSquared(c.pos) < rr * rr) { hitCharge = true; break; }
+        }
+        if (hitCharge) break;
+        if (p.lengthSq() > BOUND * BOUND) break;
+      }
+    }
+  }
+
+  if (positions.length === 0) return;
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+  const mat = new THREE.LineBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.85,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+
+  fieldGroup.add(new THREE.LineSegments(geo, mat));
+}
+
+/* ============================================================
+   交互：放置 / 拖动 / 删除
+   ============================================================ */
+let dragging = null;
+let downInfo = null;
+
+function updatePointer(e) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function raycastCharges() {
+  if (charges.length === 0) return [];
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(charges.map(c => c.mesh), false);
+  return hits.map(h => charges.find(c => c.mesh === h.object)).filter(Boolean);
+}
+
+const dom = renderer.domElement;
+
+dom.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return;
+  updatePointer(e);
+  downInfo = { x: e.clientX, y: e.clientY, moved: false };
+
+  const hits = raycastCharges();
+  if (hits.length) {
+    dragging = hits[0];
+    controls.enabled = false;          // 拖动电荷时禁用相机旋转
+    dom.style.cursor = 'grabbing';
+  }
+});
+
+dom.addEventListener('pointermove', (e) => {
+  if (downInfo) {
+    const d = Math.hypot(e.clientX - downInfo.x, e.clientY - downInfo.y);
+    if (d > 4) downInfo.moved = true;
+  }
+  updatePointer(e);
+
+  if (dragging) {
+    raycaster.setFromCamera(pointer, camera);
+    const hit = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(placePlane, hit)) {
+      hit.x = THREE.MathUtils.clamp(hit.x, -PLACE_RANGE, PLACE_RANGE);
+      hit.z = THREE.MathUtils.clamp(hit.z, -PLACE_RANGE, PLACE_RANGE);
+      hit.y = 0;
+      dragging.pos.copy(hit);
+      fieldDirty = true;
+    }
+  } else {
+    const hits = raycastCharges();
+    dom.style.cursor = hits.length ? 'grab' : 'crosshair';
+  }
+});
+
+dom.addEventListener('pointerup', (e) => {
+  if (dragging) {
+    dragging = null;
+    controls.enabled = true;
+    dom.style.cursor = 'grab';
+  } else if (downInfo && !downInfo.moved) {
+    // 单击空白处 → 放置新电荷
+    updatePointer(e);
+    raycaster.setFromCamera(pointer, camera);
+    const hit = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(placePlane, hit)) {
+      if (Math.abs(hit.x) < PLACE_RANGE && Math.abs(hit.z) < PLACE_RANGE) {
+        addCharge(new THREE.Vector3(hit.x, 0, hit.z), placeQ);
+      }
+    }
+  }
+  downInfo = null;
+});
+
+dom.addEventListener('pointercancel', () => {
+  dragging = null;
+  downInfo = null;
+  controls.enabled = true;
+});
+
+// 右键删除
+dom.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  updatePointer(e);
+  const hits = raycastCharges();
+  if (hits.length) removeCharge(hits[0]);
+});
+
+/* ============================================================
+   UI 事件
+   ============================================================ */
+const btnPos = document.getElementById('btnPos');
+const btnNeg = document.getElementById('btnNeg');
+
+btnPos.addEventListener('click', () => {
+  placeQ = 1;
+  btnPos.classList.add('active');
+  btnNeg.classList.remove('active');
+});
+btnNeg.addEventListener('click', () => {
+  placeQ = -1;
+  btnNeg.classList.add('active');
+  btnPos.classList.remove('active');
+});
+
+document.getElementById('btnClear').addEventListener('click', clearAll);
+
+document.getElementById('chkLines').addEventListener('change', (e) => {
+  showLines = e.target.checked;
+  fieldDirty = true;
+});
+
+/* ============================================================
+   渲染循环
+   ============================================================ */
+function animate(t) {
+  requestAnimationFrame(animate);
+
+  if (fieldDirty && t - lastRebuild > REBUILD_INTERVAL) {
+    lastRebuild = t;
+    fieldDirty = false;
+    rebuildFieldLines();
+  }
+
+  // 电荷轻微脉动
+  const pulse = 1 + Math.sin(t * 0.0035) * 0.045;
+  for (const c of charges) {
+    const r = c.mesh.userData.radius;
+    c.mesh.scale.setScalar(pulse);
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+/* 自适应窗口 */
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ============================================================
+   初始示例：一个电偶极子
+   ============================================================ */
+addCharge(new THREE.Vector3(3, 0, 0), 1);
+addCharge(new THREE.Vector3(-3, 0, 0), -1);
+
+rebuildFieldLines();
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
