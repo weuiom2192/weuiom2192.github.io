@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>细胞呼吸演示 · 有氧呼吸三阶段</title>
+<style>
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 35%, #1d3a30 0%, #0b1512 75%);
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  }
+  canvas {
+    border-radius: 20px;
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .06);
+  }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ============================================================
+   *  基础设置
+   * ============================================================ */
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const W = 1100, H = 620;
+
+  const FONT = (s) =>
+    `bold ${s}px "PingFang SC","Microsoft YaHei",system-ui,-apple-system,sans-serif`;
+
+  const lerp      = (a, b, t) => a + (b - a) * t;
+  const easeInOut = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+  const easeOut   = (t) => 1 - Math.pow(1 - t, 3);
+  const wait      = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+    cv.style.width  = W * s + 'px';
+    cv.style.height = H * s + 'px';
+    cv.width  = Math.round(W * s * dpr);
+    cv.height = Math.round(H * s * dpr);
+    ctx.setTransform(s * dpr, 0, 0, s * dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+
+  /* ============================================================
+   *  布局常量
+   * ============================================================ */
+  const MITO = { x: 320, y: 55, w: 760, h: 510, r: 46 };
+  const TCA  = { x: 580, y: 310, r: 92 };
+  const ETC  = { x: 810, y: 150, w: 72, h: 340 };
+
+  const COL = {
+    glucose: '#f5a623',
+    pyr:     '#ef6c4d',
+    acetyl:  '#c0392b',
+    nadh:    '#7b68ee',
+    fadh2:   '#a569bd',
+    atp:     '#f7c948',
+    co2:     '#90a4ae',
+  };
+
+  /* ============================================================
+   *  状态
+   * ============================================================ */
+  let mols = [];
+  let anims = [];
+  let tcaPhase = 0;
+  let tcaFlash = 0;
+  let etcFlash = 0;
+  let journeyN = 0;
+
+  /* ============================================================
+   *  通用绘制工具
+   * ============================================================ */
+  function rr(x, y, w, h, r) {
+    r = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y,     x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x,     y + h, r);
+    ctx.arcTo(x,     y + h, x,     y,     r);
+    ctx.arcTo(x,     y,     x + w, y,     r);
+    ctx.closePath();
+  }
+
+  /* ============================================================
+   *  分子系统
+   * ============================================================ */
+  function addMol(x, y, label, color, opts = {}) {
+    const fs = opts.fs || 12;
+    ctx.font = FONT(fs);
+    const tw = ctx.measureText(label).width;
+    const w = opts.w || Math.max(46, tw + 26);
+    const h = opts.h || 30;
+    const m = {
+      x, y, w, h, label, color, fs,
+      textColor: opts.textColor || '#ffffff',
+      alpha: 0,
+      dead: false,
+    };
+    mols.push(m);
+    return m;
+  }
+
+  function animateTo(m, tx, ty, dur, ease = easeInOut) {
+    anims = anims.filter(a => !(a.mol === m && a.type === 'move'));
+    return new Promise((res) => {
+      anims.push({ type: 'move', mol: m, sx: m.x, sy: m.y, tx, ty, dur, t: 0, ease, res });
+    });
+  }
+
+  function fadeTo(m, to, dur = 0.3) {
+    anims = anims.filter(a => !(a.mol === m && a.type === 'fade'));
+    return new Promise((res) => {
+      anims.push({ type: 'fade', mol: m, from: m.alpha, to, dur, t: 0, ease: t => t, res });
+    });
+  }
+
+  async function kill(m, dur = 0.3) {
+    await fadeTo(m, 0, dur);
+    m.dead = true;
+  }
+
+  function tick(dt) {
+    for (let i = anims.length - 1; i >= 0; i--) {
+      const a = anims[i];
+      a.t += dt;
+      const p = Math.min(1, a.t / a.dur);
+      const e = a.ease(p);
+      if (a.type === 'fade') {
+        a.mol.alpha = lerp(a.from, a.to, e);
+      } else {
+        a.mol.x = lerp(a.sx, a.tx, e);
+        a.mol.y = lerp(a.sy, a.ty, e);
+      }
+      if (p >= 1) {
+        anims.splice(i, 1);
+        if (a.res) a.res();
+      }
+    }
+    mols = mols.filter(m => !m.dead);
+  }
+
+  /* 生成一个飘散消失的小分子 */
+  function puff(x, y, label, color, dx, dy, opts = {}) {
+    const m = addMol(x, y, label, color, opts);
+    fadeTo(m, 1, 0.25);
+    animateTo(m, x + dx, y + dy, opts.dur || 1.5, easeOut).then(() => kill(m, 0.5));
+    return m;
+  }
+
+  /* 电子载体飞向电子传递链 → 产生 ATP */
+  async function sendCarrier(label, color, x, y, targetY, delay = 0, dur = 1.1) {
+    if (delay > 0) await wait(delay * 1000);
+    const m = addMol(x, y, label, color, { fs: 10, w: label.length > 4 ? 70 : 58, h: 26 });
+    fadeTo(m, 1, 0.25);
+    await animateTo(m, ETC.x - 16, targetY, dur);
+    etcFlash = 1;
+    await kill(m, 0.3);
+
+    puff(ETC.x + ETC.w + 26, targetY, 'ATP', COL.atp, 76, -34, {
+      fs: 10, w: 46, h: 24, textColor: '#6b4b00', dur: 1.4,
+    });
+  }
+
+  /* ============================================================
+   *  一次完整的葡萄糖代谢旅程
+   * ============================================================ */
+  async function journey() {
+    const n = journeyN++;
+    const d = ((n % 3) - 1) * 16;   // 轻微错位，避免多轮重叠
+    const CY = 310 + d;
+
+    /* ---------- ① 糖酵解 ---------- */
+    const glu = addMol(-110, CY, '葡萄糖', COL.glucose, { fs: 13, w: 104, h: 36 });
+    fadeTo(glu, 1, 0.35);
+    await animateTo(glu, 90, CY, 1.4, easeOut);
+    await animateTo(glu, 172, CY, 0.55);
+
+    // 一分为二
+    kill(glu, 0.4);
+
+    const p1 = addMol(172, CY, '丙酮酸', COL.pyr, { fs: 11, w: 74, h: 28 });
+    const p2 = addMol(172, CY, '丙酮酸', COL.pyr, { fs: 11, w: 74, h: 28 });
+    fadeTo(p1, 1, 0.3);
+    fadeTo(p2, 1, 0.3);
+
+    // 糖酵解净得 2 ATP + 2 NADH
+    puff(232, CY - 58, 'ATP', COL.atp, 46, -46,
+      { fs: 10, w: 46, h: 24, textColor: '#6b4b00', dur: 1.4 });
+    puff(232, CY + 58, 'ATP', COL.atp, 46, 46,
+      { fs: 10, w: 46, h: 24, textColor: '#6b4b00', dur: 1.4 });
+    sendCarrier('NADH', COL.nadh, 244, CY, 200, 0.3, 0.9);
+
+    /* ---------- 丙酮酸进入线粒体 ---------- */
+    await Promise.all([
+      animateTo(p1, 400, CY - 72, 1.0),
+      animateTo(p2, 400, CY + 72, 1.0),
+    ]);
+    await Promise.all([
+      animateTo(p1, 462, CY - 72, 0.6),
+      animateTo(p2, 462, CY + 72, 0.6),
+    ]);
+
+    /* ---------- ② 丙酮酸氧化脱羧 ---------- */
+    kill(p1, 0.3);
+    kill(p2, 0.3);
+
+    const a1 = addMol(462, CY - 72, '乙酰辅酶A', COL.acetyl, { fs: 10, w: 92, h: 28 });
+    const a2 = addMol(462, CY + 72, '乙酰辅酶A', COL.acetyl, { fs: 10, w: 92, h: 28 });
+    fadeTo(a1, 1, 0.3);
+    fadeTo(a2, 1, 0.3);
+
+    puff(430, CY - 72, 'CO₂', COL.co2, -22, -92, { fs: 10, w: 46, h: 24, dur: 1.6 });
+    puff(430, CY + 72, 'CO₂', COL.co2, -22, -92, { fs: 10, w: 46, h: 24, dur: 1.6 });
+
+    sendCarrier('NADH', COL.nadh, 496, CY - 72, 285 + d, 0.2, 0.9);
+    sendCarrier('NADH', COL.nadh, 496, CY + 72, 370 + d, 0.35, 0.9);
+
+    await Promise.all([
+      animateTo(a1, 522, CY - 40, 0.8),
+      animateTo(a2, 522, CY + 40, 0.8),
+    ]);
+
+    /* ---------- ③ 三羧酸循环 ---------- */
+    tcaFlash = 1;
+    kill(a1, 0.35);
+    kill(a2, 0.35);
+
+    for (let i = 0; i < 3; i++) {
+      sendCarrier('NADH', COL.nadh, 665, CY - 50 + i * 50, 200 + i * 85, 0.15 * i, 1.1);
+    }
+    sendCarrier('FADH₂', COL.fadh2, 665, CY + 55, 455, 0.5, 1.1);
+
+    puff(668, CY, 'ATP', COL.atp, 80, -30,
+      { fs: 10, w: 46, h: 24, textColor: '#6b4b00', dur: 1.4 });
+    puff(600, CY - 82, 'CO₂', COL.co2, -42, -80, { fs: 10, w: 46, h: 24, dur: 1.6 });
+    puff(600, CY - 82, 'CO₂', COL.co2, 18, -96, { fs: 10, w: 46, h: 24, dur: 1.6 });
+  }
+
+  /* ============================================================
+   *  场景绘制
+   * ============================================================ */
+  function drawBackground() {
+    const g = ctx.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0,   '#eef8f3');
+    g.addColorStop(0.5, '#e3f2ea');
+    g.addColorStop(1,   '#d9ece4');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(140, 200, 175, 0.13)';
+    const blobs = [
+      [80, 110, 70], [200, 540, 90], [300, 160, 50],
+      [640, 545, 80], [980, 90, 60], [1040, 470, 55], [150, 330, 42],
+    ];
+    for (const [x, y, r] of blobs) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawTitle() {
+    ctx.save();
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = FONT(19);
+    ctx.fillStyle = '#2f6b52';
+    ctx.fillText('细胞呼吸 · 有氧呼吸三阶段', 30, 46);
+    ctx.font = FONT(12);
+    ctx.fillStyle = 'rgba(47, 107, 82, 0.62)';
+    ctx.fillText('C₆H₁₂O₆ + 6O₂  →  6CO₂ + 6H₂O + 能量 (ATP)', 30, 68);
+    ctx.restore();
+  }
+
+  function drawGlycolysis() {
+    const x = 28, y = 168, w = 272, h = 284;
+    ctx.save();
+    rr(x, y, w, h, 26);
+    ctx.fillStyle = 'rgba(255, 246, 214, 0.62)';
+    ctx.fill();
+    ctx.setLineDash([9, 7]);
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(214, 172, 60, 0.85)';
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = FONT(17);
+    ctx.fillStyle = '#a8811a';
+    ctx.fillText('① 糖酵解', x + 20, y + 16);
+    ctx.font = FONT(12);
+    ctx.fillStyle = 'rgba(168, 129, 26, 0.72)';
+    ctx.fillText('细胞质基质', x + 20, y + 42);
+    ctx.restore();
+  }
+
+  function drawMito() {
+    ctx.save();
+
+    // 外膜
+    rr(MITO.x, MITO.y, MITO.w, MITO.h, MITO.r);
+    const g = ctx.createLinearGradient(MITO.x, MITO.y, MITO.x + MITO.w, MITO.y + MITO.h);
+    g.addColorStop(0, '#dff3e9');
+    g.addColorStop(1, '#c9e8da');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#7ec9a6';
+    ctx.stroke();
+
+    // 内膜
+    const p = 22;
+    rr(MITO.x + p, MITO.y + p, MITO.w - 2 * p, MITO.h - 2 * p, MITO.r - p);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#57b08b';
+    ctx.stroke();
+
+    // 标签
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = FONT(15);
+    ctx.fillStyle = '#3d8a6b';
+    ctx.fillText('线粒体', MITO.x + 28, MITO.y - 14);
+
+    ctx.restore();
+  }
+
+  function drawTCA(dt) {
+    tcaPhase += dt * 0.9;
+    if (tcaFlash > 0) tcaFlash = Math.max(0, tcaFlash - dt * 1.6);
+
+    const { x: cx, y: cy, r } = TCA;
+
+    // 光晕
+    if (tcaFlash > 0) {
+      const grd = ctx.createRadialGradient(cx, cy, r * 0.5, cx, cy, r * 1.5);
+      grd.addColorStop(0, `rgba(155,126,222,${0.35 * tcaFlash})`);
+      grd.addColorStop(1, 'rgba(155,126,222,0)');
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 1.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 内部
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 10, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.44)';
+    ctx.fill();
+
+    // 底环
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(200,188,230,0.75)';
+    ctx.lineWidth = 12;
+    ctx.stroke();
+
+    // 旋转高亮弧
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, tcaPhase, tcaPhase + 1.1);
+    ctx.strokeStyle = '#9b7ede';
+    ctx.lineWidth = 12;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+
+    // 文字
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = FONT(14);
+    ctx.fillStyle = '#7a5fae';
+    ctx.fillText('三羧酸循环', cx, cy - 11);
+    ctx.font = FONT(11);
+    ctx.fillStyle = 'rgba(122, 95, 174, 0.7)';
+    ctx.fillText('Krebs Cycle', cx, cy + 11);
+  }
+
+  function drawETC(dt) {
+    if (etcFlash > 0) etcFlash = Math.max(0, etcFlash - dt * 1.8);
+
+    const { x, y, w, h } = ETC;
+
+    // 内膜带
+    rr(x, y, w, h, 22);
+    ctx.fillStyle = 'rgba(178, 226, 203, 0.92)';
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = etcFlash > 0
+      ? `rgba(240,180,41,${0.5 + 0.5 * etcFlash})`
+      : '#4fa87f';
+    ctx.stroke();
+
+    // 蛋白复合体
+    const ys = [200, 285, 370, 455];
+    const names = ['I', 'II', 'III', 'IV'];
+    ys.forEach((cy, i) => {
+      ctx.beginPath();
+      ctx.arc(x + w / 2, cy, 20, 0, Math.PI * 2);
+      ctx.fillStyle = i === 3 ? '#f0b429' : '#5b9bd5';
+      ctx.fill();
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = FONT(10);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(names[i], x + w / 2, cy);
+    });
+
+    // 标签
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = FONT(14);
+    ctx.fillStyle = '#3d8a6b';
+    ctx.fillText('③ 电子传递链', x + w / 2, y + h + 32);
+  }
+
+  function drawMol(m) {
+    if (m.alpha <= 0.01) return;
+    const { w, h } = m;
+
+    ctx.save();
+    ctx.globalAlpha = m.alpha;
+    ctx.translate(m.x, m.y);
+
+    // 阴影 + 底色
+    ctx.shadowColor = 'rgba(20, 60, 45, 0.18)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 3;
+    rr(-w / 2, -h / 2, w, h, h / 2);
+    ctx.fillStyle = m.color;
+    ctx.fill();
+
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // 高光
+    ctx.save();
+    rr(-w / 2, -h / 2, w, h, h / 2);
+    ctx.clip();
+    const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+    g.addColorStop(0,   'rgba(255,255,255,0.34)');
+    g.addColorStop(0.5, 'rgba(255,255,255,0.05)');
+    g.addColorStop(1,   'rgba(0,0,0,0.07)');
+    ctx.fillStyle = g;
+    ctx.fillRect(-w / 2, -h / 2, w, h);
+    ctx.restore();
+
+    // 文字
+    ctx.fillStyle = m.textColor;
+    ctx.font = FONT(m.fs);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(m.label, 0, 0.5);
+
+    ctx.restore();
+  }
+
+  /* ============================================================
+   *  主循环
+   * ============================================================ */
+  function render(dt) {
+    ctx.clearRect(0, 0, W, H);
+    drawBackground();
+    drawTitle();
+    drawGlycolysis();
+    drawMito();
+    drawTCA(dt);
+    drawETC(dt);
+    for (let i = 0; i < mols.length; i++) drawMol(mols[i]);
+  }
+
+  let lastT = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+    tick(dt);
+    render(dt);
+    requestAnimationFrame(frame);
+  }
+
+  /* ============================================================
+   *  启动
+   * ============================================================ */
+  resize();
+  requestAnimationFrame((t) => { lastT = t; frame(t); });
+
+  (async function start() {
+    journey();
+    while (true) {
+      await wait(8000);
+      journey();
+    }
+  })();
+})();
+</script>
+</body>
+</html>
