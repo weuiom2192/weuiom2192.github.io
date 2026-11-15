@@ -1,0 +1,1969 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>自由电学实验 · 3D</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #fff; color: #111; overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  #app { display: flex; height: 100vh; }
+
+  aside {
+    width: 172px; flex: 0 0 172px;
+    border-right: 1px solid #111;
+    padding: 16px 14px 30px; overflow-y: auto;
+    background: #fff; position: relative; z-index: 5;
+  }
+  #inspector {
+    border-right: none; border-left: 1px solid #111;
+    width: 224px; flex: 0 0 224px;
+  }
+
+  h1 {
+    font-size: 12px; letter-spacing: 2px; font-weight: 700;
+    margin-bottom: 14px; text-transform: uppercase;
+  }
+  h2 {
+    font-size: 10px; letter-spacing: 1px; font-weight: 600;
+    margin: 20px 0 8px; color: #999; text-transform: uppercase;
+  }
+
+  .btn {
+    display: block; width: 100%;
+    background: #fff; color: #111; border: 1px solid #111;
+    padding: 8px 10px; margin-bottom: 7px;
+    font-size: 13px; cursor: pointer; text-align: left;
+    transition: background .12s, color .12s;
+    font-family: inherit; line-height: 1.3;
+  }
+  .btn:hover { background: #111; color: #fff; }
+  .btn.ghost { border-color: #ccc; color: #777; }
+  .btn.ghost:hover { background: #777; color: #fff; border-color: #777; }
+
+  #stage { flex: 1; position: relative; overflow: hidden; background: #fff; }
+  #stage canvas { display: block; }
+
+  .field { margin-bottom: 10px; }
+  .field label {
+    display: block; font-size: 11px; color: #666; margin-bottom: 4px;
+  }
+  .field input, .field select {
+    width: 100%; padding: 6px 8px; border: 1px solid #ccc;
+    background: #fff; font-family: inherit; font-size: 13px;
+    color: #111; outline: none; border-radius: 0;
+  }
+  .field input:focus, .field select:focus { border-color: #111; }
+
+  .hint { font-size: 12px; color: #999; line-height: 1.75; }
+
+  .readbox {
+    font-size: 12px; font-family: ui-monospace, Menlo, Consolas, monospace;
+    border: 1px solid #ddd; padding: 8px 10px; margin-bottom: 14px;
+    line-height: 1.7; min-height: 34px; background: #fafafa;
+  }
+  .readbox .bad { color: #d00; }
+
+  .readout {
+    font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace;
+    background: #fff; color: #111;
+    padding: 3px 8px; border: 1px solid #111;
+    white-space: nowrap; pointer-events: none;
+    user-select: none;
+    box-shadow: 0 1px 0 rgba(0,0,0,.06);
+  }
+  .readout.bad { background: #111; color: #fff; border-color: #111; }
+  .readout.warn {
+    background: #fff; color: #d00; border-color: #d00;
+    animation: blink .5s infinite;
+  }
+
+  #toast {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    background: #111; color: #fff; padding: 10px 22px;
+    font-size: 13px; letter-spacing: 1px; opacity: 0;
+    pointer-events: none; transition: opacity .25s; z-index: 100;
+    white-space: nowrap;
+  }
+  #toast.show { opacity: 1; }
+
+  @keyframes blink { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
+
+  .quickrow { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 10px; }
+  .quickrow .btn {
+    width: auto; padding: 4px 8px; font-size: 11px; margin-bottom: 0;
+  }
+
+  #loading {
+    position: absolute; inset: 0; z-index: 50;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; background: #fff;
+    font-size: 13px; letter-spacing: 1px; color: #888;
+    transition: opacity .4s;
+  }
+  #loading .spinner {
+    width: 26px; height: 26px; border: 2px solid #ddd;
+    border-top-color: #111; border-radius: 50%;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  #loading .errbox {
+    display: none; max-width: 420px; text-align: center;
+    line-height: 1.8; color: #111;
+  }
+  #loading .errbox b { color: #d00; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: #ddd; }
+  ::-webkit-scrollbar-thumb:hover { background: #aaa; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <aside id="palette">
+    <h1>元件库</h1>
+    <button class="btn" data-add="battery">电源</button>
+    <button class="btn" data-add="resistor">定值电阻</button>
+    <button class="btn" data-add="wire_r">电阻丝</button>
+    <button class="btn" data-add="ammeter">电流表</button>
+    <button class="btn" data-add="voltmeter">电压表</button>
+    <button class="btn" data-add="multimeter">多用电表</button>
+    <button class="btn" data-add="switch">开关</button>
+
+    <h2>操作</h2>
+    <button class="btn ghost" id="btn-clear">清空画布</button>
+    <button class="btn ghost" id="btn-fix">修复烧毁</button>
+    <button class="btn ghost" id="btn-view">复位视角</button>
+
+    <h2>提示</h2>
+    <p class="hint">
+      左键拖动空白旋转视角<br>
+      滚轮缩放<br>
+      点击端子接导线<br>
+      拖动元件移动位置<br>
+      ESC 取消连线<br>
+      Delete 删除选中
+    </p>
+  </aside>
+
+  <div id="stage">
+    <div id="loading">
+      <div class="spinner"></div>
+      <div class="loading-text">正在加载三维引擎…</div>
+      <div class="errbox">
+        <b>三维引擎加载失败</b><br>
+        请检查网络连接后刷新页面。<br>
+        若长期无法加载，可尝试换用其他网络环境。
+      </div>
+    </div>
+  </div>
+
+  <aside id="inspector"></aside>
+</div>
+<div id="toast"></div>
+
+<script>
+(function(){
+  var shown = false;
+  function showError(msg){
+    if(shown) return;
+    shown = true;
+    var box = document.getElementById('loading');
+    if(!box) return;
+    box.classList.remove('hide');
+    box.style.display = 'flex';
+    var sp = box.querySelector('.spinner');
+    if(sp) sp.style.display = 'none';
+    var lt = box.querySelector('.loading-text');
+    if(lt) lt.style.display = 'none';
+    var eb = box.querySelector('.errbox');
+    if(eb){
+      eb.style.display = 'block';
+      if(msg) eb.insertAdjacentHTML('beforeend', '<br><br><span style="color:#999;font-size:12px">' + msg + '</span>');
+    }
+  }
+  window.__showLoadError = showError;
+
+  window.addEventListener('error', function(e){
+    var m = (e && e.message) || '';
+    if(/import|module|three|WebGL/i.test(m)) showError(m);
+  }, true);
+  window.addEventListener('unhandledrejection', function(e){
+    var m = (e && e.reason && (e.reason.message || String(e.reason))) || '';
+    if(/import|module|three|fetch|network/i.test(m)) showError(m);
+  });
+
+  setTimeout(function(){
+    if(!window.__appReady) showError('加载超时');
+  }, 8000);
+})();
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+/* ==================================================================
+   0. 常量与工具
+   ================================================================== */
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const COMP_Y = 0.5;
+
+let comps = [];
+let wires = [];
+let nextId = 1;
+let wireId = 1;
+let selected = null;
+let pendingTerminal = null;
+let result = null;
+let shortCircuit = false;
+let dragState = null;
+let spawnIdx = 0;
+
+const stage = document.getElementById('stage');
+const inspector = document.getElementById('inspector');
+const toastEl = document.getElementById('toast');
+
+function getComp(id){ return comps.find(c => c.id === id); }
+
+function fmtA(i){
+  const a = Math.abs(i);
+  if(a < 1e-7) return '0.00 A';
+  if(a < 1e-3) return (i * 1e6).toFixed(1) + ' µA';
+  if(a < 1)    return (i * 1000).toFixed(2) + ' mA';
+  return i.toFixed(3) + ' A';
+}
+function fmtV(v){
+  const a = Math.abs(v);
+  if(a < 1e-6) return '0.00 V';
+  if(a < 1e-3) return (v * 1e6).toFixed(1) + ' µV';
+  if(a < 1)    return (v * 1000).toFixed(2) + ' mV';
+  return v.toFixed(3) + ' V';
+}
+function fmtR(v){
+  if(!isFinite(v)) return '∞ Ω';
+  if(v >= 1e6) return (v / 1e6).toFixed(2) + ' MΩ';
+  if(v >= 1000) return (v / 1000).toFixed(2) + ' kΩ';
+  if(v >= 1) return v.toFixed(2) + ' Ω';
+  return v.toFixed(3) + ' Ω';
+}
+function formatTick(v){
+  if(Math.abs(v) < 1e-9) return '0';
+  if(v >= 10) return String(Math.round(v));
+  if(v >= 1) {
+    const r = Math.round(v * 10) / 10;
+    return Number.isInteger(r) ? String(r) : r.toFixed(1);
+  }
+  if(v >= 0.1) {
+    const r = Math.round(v * 100) / 100;
+    return r.toFixed(2).replace(/0$/, '');
+  }
+  return v.toPrecision(2);
+}
+
+let toastTimer = null;
+function toast(msg){
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.classList.remove('show'), 1900);
+}
+
+/* ==================================================================
+   1. 元件定义
+   ================================================================== */
+const DEFS = {
+  battery: {
+    label: '电源', terms: [[-0.62, 0, 0], [0.62, 0, 0]],
+    props: { emf: 6, rint: 0.5 },
+    fields: [
+      { key: 'emf',  label: '电动势 (V)', min: 0.1,   step: 0.5 },
+      { key: 'rint', label: '内阻 (Ω)',   min: 0.001, step: 0.1 }
+    ]
+  },
+  resistor: {
+    label: '定值电阻', terms: [[-0.62, 0, 0], [0.62, 0, 0]],
+    props: { r: 10 },
+    fields: [{ key: 'r', label: '阻值 (Ω)', min: 0.001, step: 1 }]
+  },
+  wire_r: {
+    label: '电阻丝', terms: [[-0.65, 0, 0], [0.65, 0, 0]],
+    props: { rho: 1.0, len: 1.0, area: 1.0 },
+    fields: [
+      { key: 'rho',  label: '电阻率 ρ (Ω·mm²/m)', min: 0.001, step: 0.1 },
+      { key: 'len',  label: '长度 L (m)',          min: 0.01,  step: 0.1 },
+      { key: 'area', label: '横截面积 S (mm²)',    min: 0.01,  step: 0.1 }
+    ]
+  },
+  ammeter: {
+    label: '电流表', terms: [[-0.42, 0.14, -0.33], [0.42, 0.14, -0.33]],
+    props: { range: 0.6 },
+    fields: [{ key: 'range', label: '量程 (A)', min: 0.001, step: 0.1 }]
+  },
+  voltmeter: {
+    label: '电压表', terms: [[-0.42, 0.14, -0.33], [0.42, 0.14, -0.33]],
+    props: { range: 3 },
+    fields: [{ key: 'range', label: '量程 (V)', min: 0.1, step: 1 }]
+  },
+  multimeter: {
+    label: '多用电表', terms: [[-0.42, 0.14, -0.38], [0.42, 0.14, -0.38]],
+    props: { mode: 'dcv', range: 2.5, mult: 1 },
+    fields: []
+  },
+  switch: {
+    label: '开关', terms: [[-0.62, 0, 0], [0.62, 0, 0]],
+    props: { closed: true },
+    fields: []
+  }
+};
+
+/* ==================================================================
+   2. 三维场景
+   ================================================================== */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xffffff);
+
+const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
+camera.position.set(7.5, 10.5, 13);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+stage.appendChild(renderer.domElement);
+
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+stage.appendChild(labelRenderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.09;
+controls.maxPolarAngle = Math.PI * 0.492;
+controls.minDistance = 3;
+controls.maxDistance = 45;
+controls.target.set(0, 0.4, 0.4);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0xc4c4c4, 1.7));
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.1);
+keyLight.position.set(9, 16, 11);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.left = -16;
+keyLight.shadow.camera.right = 16;
+keyLight.shadow.camera.top = 16;
+keyLight.shadow.camera.bottom = -16;
+keyLight.shadow.camera.near = 1;
+keyLight.shadow.camera.far = 60;
+keyLight.shadow.bias = -0.0006;
+keyLight.shadow.normalBias = 0.02;
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0xffffff, 0.55);
+fillLight.position.set(-11, 8, -7);
+scene.add(fillLight);
+
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(140, 140),
+  new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, metalness: 0 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+const grid = new THREE.GridHelper(60, 60, 0xc9c9c9, 0xe9e9e9);
+grid.position.y = 0.002;
+const gridMats = Array.isArray(grid.material) ? grid.material : [grid.material];
+gridMats.forEach(m => { m.transparent = true; m.opacity = 0.9; });
+scene.add(grid);
+
+const selRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.66, 0.74, 56),
+  new THREE.MeshBasicMaterial({
+    color: 0x111111, side: THREE.DoubleSide,
+    transparent: true, opacity: 0.45
+  })
+);
+selRing.rotation.x = -Math.PI / 2;
+selRing.visible = false;
+scene.add(selRing);
+
+const previewGeo = new THREE.BufferGeometry();
+previewGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+const previewLine = new THREE.Line(
+  previewGeo,
+  new THREE.LineBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.9 })
+);
+previewLine.visible = false;
+scene.add(previewLine);
+
+/* ==================================================================
+   3. 表盘纹理
+   ================================================================== */
+function makeMeterFace(c){
+  const W = 512, H = 400;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+
+  ctx.fillStyle = '#f5f3ec';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.globalAlpha = 0.03;
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1;
+  for(let y = 0; y < H; y += 5){
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  const cx = 256, cy = 330;
+  const R0 = 240, R1 = 214;
+  const A0 = -50 * Math.PI / 180;
+  const A1 =  50 * Math.PI / 180;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, R0, A0 - Math.PI/2, A1 - Math.PI/2);
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, R1 - 34, A0 - Math.PI/2, A1 - Math.PI/2);
+  ctx.strokeStyle = 'rgba(0,0,0,0.30)';
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+
+  const N = 25;
+  for(let i = 0; i <= N; i++){
+    const t = i / N;
+    const th = A0 + (A1 - A0) * t;
+    const major = i % 5 === 0;
+    const rIn = major ? R1 : R0 - 12;
+    const sx = cx + R0 * Math.sin(th), sy = cy - R0 * Math.cos(th);
+    const ex = cx + rIn * Math.sin(th), ey = cy - rIn * Math.cos(th);
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = major ? 3.2 : 1.4;
+    ctx.stroke();
+
+    if(major){
+      const rT = R1 - 28;
+      const tx = cx + rT * Math.sin(th), ty = cy - rT * Math.cos(th);
+      ctx.fillStyle = '#111';
+      ctx.font = 'bold 25px "Helvetica Neue", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(formatTick(c.props.range * t), tx, ty);
+    }
+  }
+
+  ctx.fillStyle = '#111';
+  ctx.font = 'bold 72px Georgia, "Times New Roman", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(c.type === 'ammeter' ? 'A' : 'V', cx, cy - 88);
+
+  ctx.font = 'bold 20px "Helvetica Neue", Arial, sans-serif';
+  ctx.fillStyle = '#333';
+  ctx.fillText(c.type === 'ammeter' ? '安培' : '伏特', cx, cy - 40);
+
+  ctx.font = '16px "Helvetica Neue", Arial, sans-serif';
+  ctx.fillStyle = '#444';
+  ctx.fillText('直流' + (c.type === 'ammeter' ? '电流表' : '电压表'), cx, H - 22);
+
+  [[24,24],[W-24,24],[24,H-24],[W-24,H-24]].forEach(([x,y]) => {
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI*2);
+    ctx.fillStyle = '#cfcabf'; ctx.fill();
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI*2);
+    ctx.fillStyle = '#8a857a'; ctx.fill();
+  });
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+function makeMultimeterFace(c){
+  const W = 512, H = 440;
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+
+  ctx.fillStyle = '#f0ece0';
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#f8f5eb';
+  ctx.fillRect(14, 14, W - 28, 300);
+  ctx.strokeStyle = '#cfc9b8';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(14, 14, W - 28, 300);
+
+  const cx = 256, cy = 290;
+  const R0 = 210, R1 = 188;
+  const A0 = -52 * Math.PI / 180;
+  const A1 =  52 * Math.PI / 180;
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, R0, A0 - Math.PI/2, A1 - Math.PI/2);
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  const N = 30;
+  for(let i = 0; i <= N; i++){
+    const t = i / N;
+    const th = A0 + (A1 - A0) * t;
+    const major = i % 5 === 0;
+    const rIn = major ? R1 : R0 - 9;
+    const sx = cx + R0 * Math.sin(th), sy = cy - R0 * Math.cos(th);
+    const ex = cx + rIn * Math.sin(th), ey = cy - rIn * Math.cos(th);
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey);
+    ctx.strokeStyle = '#111';
+    ctx.lineWidth = major ? 2.6 : 1.2;
+    ctx.stroke();
+    if(major){
+      const rT = R1 - 24;
+      const tx = cx + rT * Math.sin(th), ty = cy - rT * Math.cos(th);
+      ctx.fillStyle = '#111';
+      ctx.font = 'bold 18px "Helvetica Neue", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(Math.round(50 * t)), tx, ty);
+    }
+  }
+
+  ctx.fillStyle = '#111';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 30px Georgia, serif';
+  ctx.fillText('Ω', cx - 158, cy - 118);
+  ctx.font = 'bold 22px Georgia, serif';
+  ctx.fillText('V', cx - 92, cy - 152);
+  ctx.fillText('A', cx + 96, cy - 150);
+
+  ctx.font = '13px "Helvetica Neue", Arial, sans-serif';
+  ctx.fillStyle = '#555';
+  ctx.fillText('MF-47 型 万用表', cx, 26);
+
+  ctx.fillStyle = '#1b1b1b';
+  ctx.fillRect(14, 326, W - 28, H - 340);
+
+  ctx.beginPath();
+  ctx.arc(cx, 386, 62, 0, Math.PI*2);
+  ctx.strokeStyle = '#3a3a3a';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  [[70, 386], [W - 70, 386]].forEach(([x, y], i) => {
+    ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI*2);
+    ctx.fillStyle = i ? '#111' : '#c22';
+    ctx.fill();
+    ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
+  });
+
+  ctx.fillStyle = '#9a9a9a';
+  ctx.font = '12px "Helvetica Neue", Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('COM', W - 70, 422);
+  ctx.fillStyle = '#d05a5a';
+  ctx.fillText('+', 70, 422);
+
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+/* ==================================================================
+   4. 几何构建
+   ================================================================== */
+function stdMat(color, opts){
+  return new THREE.MeshStandardMaterial(Object.assign({
+    color, roughness: 0.55, metalness: 0.1
+  }, opts));
+}
+
+function addLeads(group, halfLen, termX, radius, mat){
+  [-1, 1].forEach(s => {
+    const from = s * halfLen;
+    const to = s * termX;
+    const len = Math.abs(to - from);
+    if(len < 0.01) return;
+    const lead = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius, len, 10), mat
+    );
+    lead.rotation.z = Math.PI / 2;
+    lead.position.x = (from + to) / 2;
+    lead.castShadow = true;
+    group.add(lead);
+  });
+}
+
+function buildBattery(group){
+  const mats = [];
+
+  const bodyMat = stdMat(0x181818, { roughness: 0.45, metalness: 0.35 });
+  mats.push(bodyMat);
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.18, 0.18, 0.9, 32), bodyMat
+  );
+  body.rotation.z = Math.PI / 2;
+  body.castShadow = true;
+  group.add(body);
+
+  const capMat = stdMat(0xdadada, { roughness: 0.18, metalness: 0.92 });
+  mats.push(capMat);
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.082, 0.082, 0.16, 24), capMat
+  );
+  cap.rotation.z = Math.PI / 2;
+  cap.position.x = 0.50;
+  cap.castShadow = true;
+  group.add(cap);
+
+  const ringMat = stdMat(0x555555, { roughness: 0.3, metalness: 0.8 });
+  mats.push(ringMat);
+  const ring = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.192, 0.192, 0.05, 32), ringMat
+  );
+  ring.rotation.z = Math.PI / 2;
+  ring.position.x = -0.44;
+  group.add(ring);
+
+  addLeads(group, 0.45, 0.62, 0.035, stdMat(0x9a9a9a, { metalness: 0.85, roughness: 0.3 }));
+  return mats;
+}
+
+function buildResistor(group){
+  const mats = [];
+
+  const bodyMat = stdMat(0xdcdcdc, { roughness: 0.65, metalness: 0.05 });
+  mats.push(bodyMat);
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.15, 0.15, 0.72, 30), bodyMat
+  );
+  body.rotation.z = Math.PI / 2;
+  body.castShadow = true;
+  group.add(body);
+
+  const colors = [0x6b3f1f, 0x111111, 0xc02020, 0xc9a227];
+  colors.forEach((col, i) => {
+    const m = new THREE.Mesh(
+      new THREE.TorusGeometry(0.152, 0.017, 8, 26),
+      stdMat(col, { roughness: 0.55, metalness: 0.1 })
+    );
+    m.rotation.y = Math.PI / 2;
+    m.position.x = -0.24 + i * 0.13;
+    group.add(m);
+  });
+
+  addLeads(group, 0.36, 0.62, 0.03, stdMat(0x9a9a9a, { metalness: 0.85, roughness: 0.3 }));
+  return mats;
+}
+
+function buildWireResistor(group){
+  const mats = [];
+
+  const pts = [];
+  const N = 76, turns = 9;
+  for(let i = 0; i <= N; i++){
+    const t = i / N;
+    const a = t * Math.PI * 2 * turns;
+    pts.push(new THREE.Vector3(
+      -0.5 + t * 1.0,
+      Math.sin(a) * 0.088,
+      Math.cos(a) * 0.088
+    ));
+  }
+  const curve = new THREE.CatmullRomCurve3(pts);
+  const coilMat = stdMat(0x2c2c2c, { roughness: 0.32, metalness: 0.78 });
+  mats.push(coilMat);
+  const coil = new THREE.Mesh(
+    new THREE.TubeGeometry(curve, N * 2, 0.028, 8, false), coilMat
+  );
+  coil.castShadow = true;
+  group.add(coil);
+
+  addLeads(group, 0.5, 0.65, 0.03, stdMat(0x9a9a9a, { metalness: 0.85, roughness: 0.3 }));
+  return mats;
+}
+
+/* ---------- 电流表 / 电压表：真实方形表 ---------- */
+function buildMeter(group, comp){
+  const mats = [];
+
+  const caseMat = stdMat(0x1c1c1c, { roughness: 0.62, metalness: 0.12 });
+  mats.push(caseMat);
+  const caseMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(1.15, 0.26, 0.92), caseMat
+  );
+  caseMesh.castShadow = true;
+  caseMesh.receiveShadow = true;
+  group.add(caseMesh);
+
+  const faceMat = new THREE.MeshStandardMaterial({
+    map: makeMeterFace(comp), roughness: 0.72, metalness: 0.02
+  });
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.78), faceMat);
+  face.rotation.x = -Math.PI / 2;
+  face.position.y = 0.131;
+  group.add(face);
+
+  const pivot = new THREE.Group();
+  pivot.position.set(0, 0.142, 0.254);
+  const needle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.016, 0.008, 0.47),
+    new THREE.MeshBasicMaterial({ color: 0x0d0d0d })
+  );
+  needle.position.z = -0.235;
+  pivot.add(needle);
+  const hub = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.034, 0.034, 0.018, 16),
+    stdMat(0x2a2a2a, { roughness: 0.4, metalness: 0.5 })
+  );
+  hub.position.y = 0.004;
+  pivot.add(hub);
+  group.add(pivot);
+
+  [-0.42, 0.42].forEach((x, i) => {
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.075, 0.075, 0.05, 20),
+      stdMat(i ? 0x181818 : 0x9a2020, { roughness: 0.4, metalness: 0.5 })
+    );
+    base.position.set(x, 0.145, -0.33);
+    base.castShadow = true;
+    group.add(base);
+  });
+
+  group.userData.needlePivot = pivot;
+  group.userData.faceMesh = face;
+  group.userData.faceKey = String(comp.props.range);
+
+  return mats;
+}
+
+/* ---------- 多用电表：MF-47 风格 ---------- */
+function buildMultimeter(group, comp){
+  const mats = [];
+
+  const caseMat = stdMat(0x141414, { roughness: 0.6, metalness: 0.15 });
+  mats.push(caseMat);
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(1.15, 0.24, 1.0), caseMat
+  );
+  body.castShadow = true;
+  body.receiveShadow = true;
+  group.add(body);
+
+  const faceMat = new THREE.MeshStandardMaterial({
+    map: makeMultimeterFace(comp), roughness: 0.7, metalness: 0.02
+  });
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.86), faceMat);
+  face.rotation.x = -Math.PI / 2;
+  face.position.y = 0.121;
+  group.add(face);
+
+  const pivot = new THREE.Group();
+  pivot.position.set(0, 0.132, 0.137);
+  const needle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.014, 0.008, 0.41),
+    new THREE.MeshBasicMaterial({ color: 0x0d0d0d })
+  );
+  needle.position.z = -0.205;
+  pivot.add(needle);
+  const hub = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.03, 0.03, 0.016, 16),
+    stdMat(0x2a2a2a)
+  );
+  hub.position.y = 0.004;
+  pivot.add(hub);
+  group.add(pivot);
+
+  const knob = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.135, 0.145, 0.07, 32),
+    stdMat(0x242424, { roughness: 0.4, metalness: 0.5 })
+  );
+  knob.position.set(0, 0.16, 0.324);
+  knob.castShadow = true;
+  group.add(knob);
+
+  const mark = new THREE.Mesh(
+    new THREE.BoxGeometry(0.022, 0.012, 0.10),
+    stdMat(0xdedede, { roughness: 0.4, metalness: 0.4 })
+  );
+  mark.position.set(0, 0.198, 0.278);
+  group.add(mark);
+
+  [-0.363, 0.363].forEach((x, i) => {
+    const jack = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.062, 0.062, 0.045, 20),
+      stdMat(i ? 0x151515 : 0xb02222, { roughness: 0.4, metalness: 0.45 })
+    );
+    jack.position.set(x, 0.142, 0.324);
+    jack.castShadow = true;
+    group.add(jack);
+  });
+
+  [-0.42, 0.42].forEach((x, i) => {
+    const base = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.072, 0.072, 0.05, 20),
+      stdMat(i ? 0x181818 : 0x9a2020, { roughness: 0.4, metalness: 0.5 })
+    );
+    base.position.set(x, 0.145, -0.38);
+    base.castShadow = true;
+    group.add(base);
+  });
+
+  group.userData.needlePivot = pivot;
+  group.userData.faceMesh = face;
+  group.userData.faceKey = comp.props.mode + '|' + comp.props.range;
+
+  return mats;
+}
+
+function buildSwitch(group){
+  const mats = [];
+
+  const baseMat = stdMat(0x1a1a1a, { roughness: 0.55, metalness: 0.28 });
+  mats.push(baseMat);
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.12, 0.34), baseMat);
+  base.castShadow = true;
+  group.add(base);
+
+  const postMat = stdMat(0xcfcfcf, { roughness: 0.24, metalness: 0.9 });
+  mats.push(postMat);
+  [-0.28, 0.28].forEach(x => {
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.05, 0.05, 0.15, 16), postMat
+    );
+    post.position.set(x, 0.135, 0);
+    post.castShadow = true;
+    group.add(post);
+  });
+
+  const pivot = new THREE.Group();
+  pivot.position.set(-0.28, 0.20, 0);
+  const leverMat = stdMat(0x333333, { roughness: 0.4, metalness: 0.65 });
+  mats.push(leverMat);
+  const lever = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.05, 0.08), leverMat);
+  lever.position.x = 0.28;
+  lever.castShadow = true;
+  pivot.add(lever);
+  group.add(pivot);
+  group.userData.pivot = pivot;
+
+  addLeads(group, 0.4, 0.62, 0.03, stdMat(0x9a9a9a, { metalness: 0.85, roughness: 0.3 }));
+  return mats;
+}
+
+/* ==================================================================
+   5. 元件对象管理
+   ================================================================== */
+const compObjs = new Map();
+const wireObjs = new Map();
+
+function termWorld(c, i){
+  const t = DEFS[c.type].terms[i];
+  const v = new THREE.Vector3(t[0], t[1] || 0, t[2] || 0);
+  v.applyAxisAngle(Y_AXIS, c.rotY || 0);
+  return v.set(v.x + c.x, v.y + c.y, v.z + c.z);
+}
+
+function buildComponentObject(comp){
+  const d = DEFS[comp.type];
+  const group = new THREE.Group();
+  group.userData.cid = comp.id;
+
+  let bodyMats = [];
+  switch(comp.type){
+    case 'battery':     bodyMats = buildBattery(group); break;
+    case 'resistor':    bodyMats = buildResistor(group); break;
+    case 'wire_r':      bodyMats = buildWireResistor(group); break;
+    case 'ammeter':     bodyMats = buildMeter(group, comp); break;
+    case 'voltmeter':   bodyMats = buildMeter(group, comp); break;
+    case 'multimeter':  bodyMats = buildMultimeter(group, comp); break;
+    case 'switch':      bodyMats = buildSwitch(group); break;
+  }
+
+  const termMeshes = [];
+  d.terms.forEach((t, i) => {
+    const mat = stdMat(0xa9a9a9, { roughness: 0.28, metalness: 0.92 });
+    const m = new THREE.Mesh(new THREE.SphereGeometry(0.072, 20, 14), mat);
+    m.position.set(t[0], t[1] || 0, t[2] || 0);
+    m.userData = { kind: 'terminal', cid: comp.id, ti: i };
+    m.castShadow = true;
+    group.add(m);
+    termMeshes.push(m);
+  });
+
+  const div = document.createElement('div');
+  div.className = 'readout';
+  const label = new CSS2DObject(div);
+  label.position.set(0, 0.92, 0);
+  group.add(label);
+
+  return {
+    group, termMeshes, div, bodyMats, label,
+    needlePivot: group.userData.needlePivot || null,
+    faceMesh: group.userData.faceMesh || null,
+    faceKey: group.userData.faceKey || null
+  };
+}
+
+function makeWireCurve(w){
+  const ca = getComp(w.a.cid);
+  const cb = getComp(w.b.cid);
+  const p1 = termWorld(ca, w.a.ti);
+  const p2 = termWorld(cb, w.b.ti);
+  const mid = p1.clone().add(p2).multiplyScalar(0.5);
+  const dist = p1.distanceTo(p2);
+  mid.y += Math.min(2.2, 0.28 + dist * 0.20);
+  return { curve: new THREE.QuadraticBezierCurve3(p1, mid, p2), dist };
+}
+
+function makeWireGeometry(w){
+  const { curve, dist } = makeWireCurve(w);
+  const seg = Math.max(16, Math.min(64, Math.floor(dist * 9)));
+  return new THREE.TubeGeometry(curve, seg, 0.026, 8, false);
+}
+
+function buildWireMesh(w){
+  const geo = makeWireGeometry(w);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0x111111, roughness: 0.5, metalness: 0.15
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.userData.wid = w.id;
+  return mesh;
+}
+
+/* ==================================================================
+   6. 场景同步
+   ================================================================== */
+function syncScene(){
+  for(const [id, o] of compObjs){
+    if(!getComp(id)){
+      scene.remove(o.group);
+      o.group.traverse(x => {
+        if(x.geometry) x.geometry.dispose();
+        if(x.material){
+          if(x.material.map) x.material.map.dispose();
+          x.material.dispose();
+        }
+      });
+      compObjs.delete(id);
+    }
+  }
+
+  comps.forEach(c => {
+    if(!compObjs.has(c.id)){
+      const o = buildComponentObject(c);
+      scene.add(o.group);
+      compObjs.set(c.id, o);
+    }
+  });
+
+  for(const [id, mesh] of wireObjs){
+    if(!wires.find(w => w.id === id)){
+      scene.remove(mesh);
+      mesh.geometry.dispose();
+      mesh.material.dispose();
+      wireObjs.delete(id);
+    }
+  }
+
+  wires.forEach(w => {
+    if(!wireObjs.has(w.id)){
+      const mesh = buildWireMesh(w);
+      scene.add(mesh);
+      wireObjs.set(w.id, mesh);
+    }
+  });
+
+  updateTransforms();
+  updateWireGeometries();
+  updateWireSelection();
+}
+
+function updateTransforms(){
+  comps.forEach(c => {
+    const o = compObjs.get(c.id);
+    if(!o) return;
+    o.group.position.set(c.x, c.y, c.z);
+    o.group.rotation.y = c.rotY || 0;
+
+    if(c.type === 'switch' && o.group.userData.pivot){
+      o.group.userData.pivot.rotation.z = c.props.closed ? 0 : 0.55;
+    }
+  });
+}
+
+function updateWireGeometries(){
+  wires.forEach(w => {
+    const mesh = wireObjs.get(w.id);
+    if(!mesh) return;
+    mesh.geometry.dispose();
+    mesh.geometry = makeWireGeometry(w);
+  });
+}
+
+function updateWireSelection(){
+  wires.forEach(w => {
+    const mesh = wireObjs.get(w.id);
+    if(!mesh) return;
+    const isSel = selected && selected.type === 'wire' && selected.id === w.id;
+    mesh.material.color.setHex(isSel ? 0xd00000 : 0x111111);
+  });
+}
+
+/* ==================================================================
+   7. 物理求解
+   ================================================================== */
+function gauss(A, b){
+  const n = b.length;
+  if(n === 0) return new Float64Array(0);
+
+  for(let i = 0; i < n; i++){
+    let p = i;
+    for(let r = i + 1; r < n; r++){
+      if(Math.abs(A[r][i]) > Math.abs(A[p][i])) p = r;
+    }
+    if(Math.abs(A[p][i]) < 1e-14) continue;
+    if(p !== i){
+      const tA = A[i]; A[i] = A[p]; A[p] = tA;
+      const tb = b[i]; b[i] = b[p]; b[p] = tb;
+    }
+    for(let r = i + 1; r < n; r++){
+      const f = A[r][i] / A[i][i];
+      if(f === 0) continue;
+      for(let c = i; c < n; c++) A[r][c] -= f * A[i][c];
+      b[r] -= f * b[i];
+    }
+  }
+
+  const x = new Float64Array(n);
+  for(let i = n - 1; i >= 0; i--){
+    let s = b[i];
+    for(let c = i + 1; c < n; c++) s -= A[i][c] * x[c];
+    x[i] = Math.abs(A[i][i]) < 1e-14 ? 0 : s / A[i][i];
+  }
+  return x;
+}
+
+function solve(){
+  const parent = {};
+  const K = (cid, t) => cid + '#' + t;
+
+  function find(x){
+    if(parent[x] === undefined) parent[x] = x;
+    let r = x;
+    while(parent[r] !== r) r = parent[r];
+    while(parent[x] !== r){ const nx = parent[x]; parent[x] = r; x = nx; }
+    return r;
+  }
+  function union(a, b){
+    a = find(a); b = find(b);
+    if(a !== b) parent[a] = b;
+  }
+
+  comps.forEach(c => DEFS[c.type].terms.forEach((_, i) => find(K(c.id, i))));
+  wires.forEach(w => union(K(w.a.cid, w.a.ti), K(w.b.cid, w.b.ti)));
+
+  const rootMap = {};
+  let nNodes = 0;
+  for(const k in parent){
+    const r = find(k);
+    if(rootMap[r] === undefined) rootMap[r] = nNodes++;
+  }
+  const nodeOf = (cid, t) => rootMap[find(K(cid, t))];
+
+  const resParts = [];
+  const vsParts = [];
+  let nodeCount = nNodes;
+
+  comps.forEach(c => {
+    if(c.burnt) return;
+    const n1 = nodeOf(c.id, 0);
+    const n2 = nodeOf(c.id, 1);
+    const p = c.props;
+
+    switch(c.type){
+      case 'resistor':
+        resParts.push({ cid: c.id, a: n1, b: n2, R: Math.max(+p.r, 1e-6) });
+        break;
+      case 'wire_r': {
+        const R = (+p.rho) * (+p.len) / Math.max(+p.area, 1e-6);
+        resParts.push({ cid: c.id, a: n1, b: n2, R: Math.max(R, 1e-6) });
+        break;
+      }
+      case 'switch':
+        if(p.closed) resParts.push({ cid: c.id, a: n1, b: n2, R: 1e-4 });
+        break;
+      case 'ammeter':
+        resParts.push({ cid: c.id, a: n1, b: n2, R: 0.05 });
+        break;
+      case 'voltmeter':
+        resParts.push({ cid: c.id, a: n1, b: n2, R: Math.max(+p.range * 1000, 1) });
+        break;
+      case 'multimeter': {
+        if(p.mode === 'dcv'){
+          resParts.push({ cid: c.id, a: n1, b: n2, R: Math.max(+p.range * 20000, 100) });
+        } else if(p.mode === 'dca'){
+          resParts.push({ cid: c.id, a: n1, b: n2, R: 0.5 });
+        } else {
+          const m = nodeCount++;
+          vsParts.push({ cid: c.id, p: n1, q: m, E: 1.5 });
+          resParts.push({
+            cid: c.id, a: m, b: n2,
+            R: 15 * Math.max(+p.mult, 0.001), internal: true
+          });
+        }
+        break;
+      }
+      case 'battery': {
+        const m = nodeCount++;
+        vsParts.push({ cid: c.id, p: n1, q: m, E: +p.emf });
+        resParts.push({
+          cid: c.id, a: m, b: n2,
+          R: Math.max(+p.rint, 1e-3), internal: true
+        });
+        break;
+      }
+    }
+  });
+
+  const n = nodeCount;
+  const m = vsParts.length;
+  const size = (n - 1) + m;
+
+  if(size <= 0){
+    const out = { comps: {}, V: new Float64Array(Math.max(n, 1)) };
+    comps.forEach(c => { out.comps[c.id] = { U: 0, I: 0 }; });
+    return out;
+  }
+
+  const A = [];
+  for(let i = 0; i < size; i++) A.push(new Float64Array(size));
+  const b = new Float64Array(size);
+  const idx = i => i - 1;
+
+  resParts.forEach(rp => {
+    const g = 1 / rp.R;
+    if(rp.a > 0) A[idx(rp.a)][idx(rp.a)] += g;
+    if(rp.b > 0) A[idx(rp.b)][idx(rp.b)] += g;
+    if(rp.a > 0 && rp.b > 0){
+      A[idx(rp.a)][idx(rp.b)] -= g;
+      A[idx(rp.b)][idx(rp.a)] -= g;
+    }
+  });
+
+  for(let i = 1; i < n; i++) A[idx(i)][idx(i)] += 1e-9;
+
+  vsParts.forEach((vp, k) => {
+    const row = (n - 1) + k;
+    if(vp.p > 0){ A[idx(vp.p)][row] += 1; A[row][idx(vp.p)] += 1; }
+    if(vp.q > 0){ A[idx(vp.q)][row] -= 1; A[row][idx(vp.q)] -= 1; }
+    b[row] = vp.E;
+  });
+
+  const x = gauss(A, b);
+
+  const V = new Float64Array(n);
+  for(let i = 1; i < n; i++) V[i] = x[i - 1];
+
+  const out = { comps: {}, V };
+
+  resParts.forEach(rp => {
+    if(rp.internal) return;
+    const U = V[rp.a] - V[rp.b];
+    out.comps[rp.cid] = { U, I: U / rp.R };
+  });
+
+  vsParts.forEach((vp, k) => {
+    const I = x[(n - 1) + k];
+    const o = out.comps[vp.cid] || {};
+    o.I = Math.abs(I);
+    out.comps[vp.cid] = o;
+  });
+
+  comps.forEach(c => {
+    if(c.type === 'battery' && !c.burnt){
+      const o = out.comps[c.id] || {};
+      o.U = V[nodeOf(c.id, 0)] - V[nodeOf(c.id, 1)];
+      o.I = o.I || 0;
+      out.comps[c.id] = o;
+    }
+  });
+
+  return out;
+}
+
+/* ==================================================================
+   8. 刷新
+   ================================================================== */
+function refresh(){
+  let guard = 0;
+  do {
+    result = solve();
+    let changed = false;
+
+    comps.forEach(c => {
+      if(c.burnt) return;
+      const r = result.comps[c.id];
+      if(!r) return;
+      const p = c.props;
+
+      if(c.type === 'ammeter' && Math.abs(r.I || 0) > p.range * 1.2){
+        c.burnt = true; changed = true;
+        toast('⚠ 电流表严重超量程，线圈烧毁');
+      }
+      if(c.type === 'voltmeter' && Math.abs(r.U || 0) > p.range * 1.2){
+        c.burnt = true; changed = true;
+        toast('⚠ 电压表严重超量程，表头烧毁');
+      }
+      if(c.type === 'multimeter'){
+        if(p.mode === 'dcv' && Math.abs(r.U || 0) > p.range * 1.2){
+          c.burnt = true; changed = true; toast('⚠ 多用电表烧毁');
+        }
+        if(p.mode === 'dca' && Math.abs(r.I || 0) > p.range * 1.2){
+          c.burnt = true; changed = true; toast('⚠ 多用电表烧毁');
+        }
+      }
+    });
+
+    if(!changed) break;
+  } while(guard++ < 8);
+
+  shortCircuit = false;
+  comps.forEach(c => {
+    if(c.type !== 'battery' || c.burnt) return;
+    const r = result.comps[c.id];
+    if(!r) return;
+    const drop = Math.abs(r.I || 0) * c.props.rint;
+    if(drop > 0.7 * c.props.emf && Math.abs(r.I || 0) > 0.2) shortCircuit = true;
+  });
+
+  syncScene();
+  updateReadouts();
+  updateInspectorReadout();
+}
+
+/* ==================================================================
+   9. 读数 / 指针 / 视觉
+   ================================================================== */
+function getReadoutText(c){
+  const r = result && result.comps[c.id];
+  const p = c.props;
+
+  if(c.burnt) return { text: '烧毁', cls: 'bad' };
+  if(!r) return { text: '', cls: '' };
+
+  switch(c.type){
+    case 'ammeter': {
+      const bad = Math.abs(r.I || 0) > p.range * 1.02;
+      return { text: fmtA(r.I || 0), cls: bad ? 'bad' : '' };
+    }
+    case 'voltmeter': {
+      const bad = Math.abs(r.U || 0) > p.range * 1.02;
+      return { text: fmtV(r.U || 0), cls: bad ? 'bad' : '' };
+    }
+    case 'battery':
+      return { text: fmtV(r.U || 0), cls: '' };
+    case 'resistor':
+      return { text: fmtR(p.r), cls: '' };
+    case 'wire_r':
+      return { text: fmtR(p.rho * p.len / Math.max(p.area, 1e-6)), cls: '' };
+    case 'multimeter': {
+      if(p.mode === 'dcv'){
+        const bad = Math.abs(r.U || 0) > p.range * 1.02;
+        return { text: fmtV(r.U || 0), cls: bad ? 'bad' : '' };
+      }
+      if(p.mode === 'dca'){
+        const bad = Math.abs(r.I || 0) > p.range * 1.02;
+        return { text: fmtA(r.I || 0), cls: bad ? 'bad' : '' };
+      }
+      const Rint = 15 * p.mult;
+      const I = Math.abs(r.I || 0);
+      if(I < 1e-6) return { text: '∞ Ω', cls: '' };
+      const Rx = 1.5 / I - Rint;
+      return { text: Rx <= 0 ? '0 Ω' : fmtR(Rx), cls: '' };
+    }
+    case 'switch':
+      return { text: p.closed ? '闭合' : '断开', cls: '' };
+  }
+  return { text: '', cls: '' };
+}
+
+/* 指针偏转比例 0..1 */
+function needleFrac(c){
+  const r = result && result.comps[c.id];
+  if(c.burnt || !r) return 0;
+  const p = c.props;
+
+  if(c.type === 'ammeter')     return Math.abs(r.I || 0) / p.range;
+  if(c.type === 'voltmeter')   return Math.abs(r.U || 0) / p.range;
+
+  if(c.type === 'multimeter'){
+    if(p.mode === 'dcv') return Math.abs(r.U || 0) / p.range;
+    if(p.mode === 'dca') return Math.abs(r.I || 0) / p.range;
+    const I = Math.abs(r.I || 0);
+    if(I < 1e-9) return 1;
+    const Rx = 1.5 / I - 15 * p.mult;
+    if(!isFinite(Rx) || Rx < 0) return 1;
+    return Math.min(1, Math.log10(1 + Rx) / 6);
+  }
+  return 0;
+}
+
+function updateNeedle(c, o){
+  if(!o.needlePivot) return;
+  let frac = needleFrac(c);
+  frac = Math.max(-0.05, Math.min(1.10, frac));
+  const theta = (-50 + 100 * frac) * Math.PI / 180;
+  o.needlePivot.rotation.y = -theta;
+}
+
+function refreshFaceTexture(c, o){
+  if(!o.faceMesh) return;
+  let key;
+  if(c.type === 'multimeter') key = c.props.mode + '|' + c.props.range;
+  else key = String(c.props.range);
+  if(o.faceKey === key) return;
+  o.faceKey = key;
+
+  const m = o.faceMesh.material;
+  if(m.map) m.map.dispose();
+  m.map = (c.type === 'multimeter') ? makeMultimeterFace(c) : makeMeterFace(c);
+  m.needsUpdate = true;
+}
+
+function updateReadouts(){
+  comps.forEach(c => {
+    const o = compObjs.get(c.id);
+    if(!o) return;
+
+    const { text, cls } = getReadoutText(c);
+    o.div.textContent = text;
+    o.div.className = 'readout' + (cls ? ' ' + cls : '');
+
+    o.termMeshes.forEach((m, i) => {
+      const active = pendingTerminal &&
+                     pendingTerminal.cid === c.id &&
+                     pendingTerminal.ti === i;
+      m.material.color.setHex(active ? 0x111111 : 0xa9a9a9);
+      m.scale.setScalar(active ? 1.45 : 1);
+    });
+
+    o.bodyMats.forEach(m => {
+      if(c.burnt){
+        m.emissive.setHex(0x6a0000);
+        m.emissiveIntensity = 0.85;
+      } else {
+        m.emissive.setHex(0x000000);
+        m.emissiveIntensity = 0;
+      }
+    });
+
+    refreshFaceTexture(c, o);
+    updateNeedle(c, o);
+  });
+
+  comps.forEach(c => {
+    if(c.type !== 'battery' || c.burnt) return;
+    const o = compObjs.get(c.id);
+    if(!o) return;
+    if(shortCircuit){
+      if(!o.shortTag){
+        const d = document.createElement('div');
+        d.className = 'readout warn';
+        d.textContent = '⚠ 短路';
+        const obj = new CSS2DObject(d);
+        obj.position.set(0, 1.5, 0);
+        o.group.add(obj);
+        o.shortTag = obj;
+      }
+      o.shortTag.visible = true;
+    } else if(o.shortTag){
+      o.shortTag.visible = false;
+    }
+  });
+
+  if(selected && selected.type === 'comp'){
+    const c = getComp(selected.id);
+    if(c){
+      selRing.position.set(c.x, 0.012, c.z);
+      selRing.visible = true;
+    } else {
+      selRing.visible = false;
+    }
+  } else {
+    selRing.visible = false;
+  }
+
+  updateWireSelection();
+}
+
+/* ==================================================================
+   10. 属性面板
+   ================================================================== */
+let inspectorReadoutEl = null;
+
+function mkBtn(text, onClick, ghost){
+  const b = document.createElement('button');
+  b.className = 'btn' + (ghost ? ' ghost' : '');
+  b.textContent = text;
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+function readoutHTML(c){
+  const { text } = getReadoutText(c);
+  if(c.burnt) return '<span class="bad">已烧毁</span>';
+  if(!text) return '—';
+
+  const r = result && result.comps[c.id];
+  let extra = '';
+  if(r){
+    switch(c.type){
+      case 'battery':
+        extra = '<br>I = ' + fmtA(r.I || 0);
+        break;
+      case 'resistor':
+      case 'wire_r':
+        extra = '<br>I = ' + fmtA(r.I || 0) + '<br>U = ' + fmtV(r.U || 0);
+        break;
+    }
+  }
+  return text + extra;
+}
+
+function renderInspector(){
+  inspector.innerHTML = '';
+  inspectorReadoutEl = null;
+
+  if(selected && selected.type === 'wire'){
+    const h = document.createElement('h1');
+    h.textContent = '导线';
+    inspector.appendChild(h);
+    inspector.appendChild(mkBtn('删除导线', () => {
+      wires = wires.filter(w => w.id !== selected.id);
+      selected = null;
+      syncScene();
+      refresh();
+      renderInspector();
+    }));
+    return;
+  }
+
+  if(!selected || selected.type !== 'comp'){
+    const h = document.createElement('h1');
+    h.textContent = '属性';
+    inspector.appendChild(h);
+    const p = document.createElement('p');
+    p.className = 'hint';
+    p.innerHTML =
+      '点击画布中的元件查看并修改参数。<br><br>' +
+      '点击元件上的银色接线柱，再点另一个接线柱，即可连接导线。<br><br>' +
+      '拖动元件可以移动位置，左键拖动空白处旋转视角，滚轮缩放。';
+    inspector.appendChild(p);
+    return;
+  }
+
+  const c = getComp(selected.id);
+  if(!c){ selected = null; renderInspector(); return; }
+
+  const d = DEFS[c.type];
+
+  const h = document.createElement('h1');
+  h.textContent = d.label;
+  inspector.appendChild(h);
+
+  const box = document.createElement('div');
+  box.className = 'readbox';
+  box.innerHTML = readoutHTML(c);
+  inspector.appendChild(box);
+  inspectorReadoutEl = box;
+
+  d.fields.forEach(f => {
+    const row = document.createElement('div');
+    row.className = 'field';
+
+    const lab = document.createElement('label');
+    lab.textContent = f.label;
+
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = f.step !== undefined ? f.step : 'any';
+    inp.min = f.min !== undefined ? f.min : 'any';
+    inp.value = c.props[f.key];
+
+    inp.addEventListener('change', () => {
+      let v = parseFloat(inp.value);
+      if(isNaN(v)) v = f.min !== undefined ? f.min : 1;
+      if(f.min !== undefined) v = Math.max(v, f.min);
+      c.props[f.key] = v;
+      refresh();
+    });
+
+    row.appendChild(lab);
+    row.appendChild(inp);
+    inspector.appendChild(row);
+  });
+
+  if(c.type === 'multimeter'){
+    const modeRow = document.createElement('div');
+    modeRow.className = 'field';
+    const ml = document.createElement('label');
+    ml.textContent = '测量模式';
+
+    const sel = document.createElement('select');
+    sel.innerHTML =
+      '<option value="dcv">直流电压档 (V)</option>' +
+      '<option value="dca">直流电流档 (A)</option>' +
+      '<option value="ohm">欧姆档 (Ω)</option>';
+    sel.value = c.props.mode;
+
+    sel.addEventListener('change', () => {
+      c.props.mode = sel.value;
+      refresh();
+      renderInspector();
+    });
+
+    modeRow.appendChild(ml);
+    modeRow.appendChild(sel);
+    inspector.appendChild(modeRow);
+
+    if(c.props.mode === 'ohm'){
+      const row = document.createElement('div');
+      row.className = 'field';
+      const lab = document.createElement('label');
+      lab.textContent = '倍率';
+
+      const s2 = document.createElement('select');
+      [1, 10, 100, 1000].forEach(mv => {
+        const o = document.createElement('option');
+        o.value = mv;
+        o.textContent = '×' + mv;
+        s2.appendChild(o);
+      });
+      s2.value = c.props.mult;
+
+      s2.addEventListener('change', () => {
+        c.props.mult = +s2.value;
+        refresh();
+      });
+
+      row.appendChild(lab);
+      row.appendChild(s2);
+      inspector.appendChild(row);
+    } else {
+      const row = document.createElement('div');
+      row.className = 'field';
+      const lab = document.createElement('label');
+      lab.textContent = '量程 (' + (c.props.mode === 'dcv' ? 'V' : 'A') + ')';
+
+      const inp = document.createElement('input');
+      inp.type = 'number';
+      inp.step = 'any';
+      inp.min = '0.001';
+      inp.value = c.props.range;
+
+      inp.addEventListener('change', () => {
+        c.props.range = Math.max(parseFloat(inp.value) || 1, 0.001);
+        refresh();
+      });
+
+      row.appendChild(lab);
+      row.appendChild(inp);
+      inspector.appendChild(row);
+
+      const quick = document.createElement('div');
+      quick.className = 'quickrow';
+      const opts = c.props.mode === 'dcv'
+        ? [0.5, 1, 2.5, 3, 10, 15, 50]
+        : [0.06, 0.1, 0.6, 1, 3];
+
+      opts.forEach(v => {
+        const b = document.createElement('button');
+        b.className = 'btn';
+        b.textContent = v;
+        b.addEventListener('click', () => {
+          c.props.range = v;
+          refresh();
+          renderInspector();
+        });
+        quick.appendChild(b);
+      });
+      inspector.appendChild(quick);
+    }
+  }
+
+  if(c.type === 'switch'){
+    inspector.appendChild(mkBtn(
+      c.props.closed ? '断开开关' : '闭合开关',
+      () => {
+        c.props.closed = !c.props.closed;
+        refresh();
+        renderInspector();
+      }
+    ));
+  }
+
+  inspector.appendChild(mkBtn('旋转 90°', () => {
+    c.rotY = ((c.rotY || 0) + Math.PI / 2) % (Math.PI * 2);
+    syncScene();
+    refresh();
+  }));
+
+  inspector.appendChild(mkBtn('删除元件', () => {
+    comps = comps.filter(x => x.id !== c.id);
+    wires = wires.filter(w => w.a.cid !== c.id && w.b.cid !== c.id);
+    selected = null;
+    syncScene();
+    refresh();
+    renderInspector();
+  }, true));
+}
+
+function updateInspectorReadout(){
+  if(!inspectorReadoutEl) return;
+  if(!selected || selected.type !== 'comp') return;
+  const c = getComp(selected.id);
+  if(!c) return;
+  inspectorReadoutEl.innerHTML = readoutHTML(c);
+}
+
+/* ==================================================================
+   11. 交互
+   ================================================================== */
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+
+function updatePointer(e){
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+}
+
+function pickTerminal(){
+  const list = [];
+  compObjs.forEach(o => list.push(...o.termMeshes));
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(list, false);
+  return hits.length ? hits[0].object : null;
+}
+
+function pickWire(){
+  const list = [];
+  wireObjs.forEach(m => list.push(m));
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(list, false);
+  return hits.length ? hits[0].object : null;
+}
+
+function pickComponent(){
+  const list = [];
+  compObjs.forEach(o => list.push(o.group));
+  raycaster.setFromCamera(pointer, camera);
+  const hits = raycaster.intersectObjects(list, true);
+  if(!hits.length) return null;
+  let obj = hits[0].object;
+  while(obj && obj.userData.cid === undefined) obj = obj.parent;
+  return obj && obj.userData.cid !== undefined ? obj.userData.cid : null;
+}
+
+function select(sel){
+  selected = sel;
+  pendingTerminal = null;
+  updateReadouts();
+  renderInspector();
+}
+
+function onTerminalClick(cid, ti){
+  if(pendingTerminal){
+    if(pendingTerminal.cid === cid && pendingTerminal.ti === ti){
+      pendingTerminal = null;
+    } else {
+      wires.push({
+        id: wireId++,
+        a: { cid: pendingTerminal.cid, ti: pendingTerminal.ti },
+        b: { cid, ti }
+      });
+      pendingTerminal = null;
+      syncScene();
+      refresh();
+      return;
+    }
+  } else {
+    pendingTerminal = { cid, ti };
+  }
+  updateReadouts();
+}
+
+function startDrag(c){
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -c.y);
+  const pt = new THREE.Vector3();
+  raycaster.setFromCamera(pointer, camera);
+  if(!raycaster.ray.intersectPlane(plane, pt)) return;
+
+  dragState = {
+    comp: c,
+    plane,
+    ox: c.x - pt.x,
+    oz: c.z - pt.z
+  };
+}
+
+function onPointerDown(e){
+  if(e.button !== 0) return;
+  updatePointer(e);
+
+  const term = pickTerminal();
+  if(term){
+    e.stopPropagation();
+    onTerminalClick(term.userData.cid, term.userData.ti);
+    return;
+  }
+
+  const wireMesh = pickWire();
+  if(wireMesh){
+    e.stopPropagation();
+    select({ type: 'wire', id: wireMesh.userData.wid });
+    return;
+  }
+
+  const cid = pickComponent();
+  if(cid !== null){
+    e.stopPropagation();
+    const c = getComp(cid);
+    select({ type: 'comp', id: cid });
+    startDrag(c);
+    return;
+  }
+
+  if(pendingTerminal) pendingTerminal = null;
+  select(null);
+}
+
+function onPointerMove(e){
+  updatePointer(e);
+
+  if(dragState){
+    raycaster.setFromCamera(pointer, camera);
+    const pt = new THREE.Vector3();
+    if(raycaster.ray.intersectPlane(dragState.plane, pt)){
+      dragState.comp.x = pt.x + dragState.ox;
+      dragState.comp.z = pt.z + dragState.oz;
+      updateTransforms();
+      updateWireGeometries();
+      if(selected && selected.type === 'comp'){
+        selRing.position.set(dragState.comp.x, 0.012, dragState.comp.z);
+      }
+    }
+    return;
+  }
+
+  if(pendingTerminal){
+    const c = getComp(pendingTerminal.cid);
+    if(c){
+      raycaster.setFromCamera(pointer, camera);
+      const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.62);
+      const pt = new THREE.Vector3();
+      if(raycaster.ray.intersectPlane(plane, pt)){
+        const p1 = termWorld(c, pendingTerminal.ti);
+        const pos = previewGeo.attributes.position;
+        pos.setXYZ(0, p1.x, p1.y, p1.z);
+        pos.setXYZ(1, pt.x, pt.y, pt.z);
+        pos.needsUpdate = true;
+        previewGeo.computeBoundingSphere();
+        previewLine.visible = true;
+      }
+    }
+  } else {
+    previewLine.visible = false;
+  }
+}
+
+function onPointerUp(){
+  if(dragState){
+    dragState = null;
+    refresh();
+  }
+}
+
+renderer.domElement.addEventListener('pointerdown', onPointerDown, true);
+window.addEventListener('pointermove', onPointerMove);
+window.addEventListener('pointerup', onPointerUp);
+
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape'){
+    pendingTerminal = null;
+    previewLine.visible = false;
+    updateReadouts();
+  }
+  if((e.key === 'Delete' || e.key === 'Backspace') && selected){
+    if(selected.type === 'wire'){
+      wires = wires.filter(w => w.id !== selected.id);
+    } else {
+      comps = comps.filter(x => x.id !== selected.id);
+      wires = wires.filter(w => w.a.cid !== selected.id && w.b.cid !== selected.id);
+    }
+    selected = null;
+    syncScene();
+    refresh();
+    renderInspector();
+  }
+});
+
+/* ==================================================================
+   12. 元件添加
+   ================================================================== */
+function addCompRaw(type, x, z){
+  const c = {
+    id: nextId++,
+    type,
+    x, y: COMP_Y, z,
+    rotY: 0,
+    burnt: false,
+    props: JSON.parse(JSON.stringify(DEFS[type].props))
+  };
+  comps.push(c);
+  return c;
+}
+
+function addComponent(type){
+  const rect = stage.getBoundingClientRect();
+  const cols = 3;
+  const col = spawnIdx % cols;
+  const row = Math.floor(spawnIdx / cols) % 4;
+  spawnIdx++;
+
+  const spanX = Math.min(14, Math.max(3.2, rect.width / 110));
+  const x = (col - 1) * spanX + (Math.random() - 0.5) * 0.6;
+  const z = (row - 1.5) * 2.3 + (Math.random() - 0.5) * 0.6;
+
+  const c = addCompRaw(type, x, z);
+  syncScene();
+  select({ type: 'comp', id: c.id });
+  refresh();
+}
+
+document.querySelectorAll('[data-add]').forEach(b => {
+  b.addEventListener('click', () => addComponent(b.dataset.add));
+});
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  comps = [];
+  wires = [];
+  selected = null;
+  pendingTerminal = null;
+  result = null;
+  shortCircuit = false;
+  spawnIdx = 0;
+  previewLine.visible = false;
+  syncScene();
+  refresh();
+  renderInspector();
+});
+
+document.getElementById('btn-fix').addEventListener('click', () => {
+  let n = 0;
+  comps.forEach(c => {
+    if(c.burnt){ c.burnt = false; n++; }
+  });
+  if(n) toast('已修复 ' + n + ' 个元件');
+  refresh();
+});
+
+document.getElementById('btn-view').addEventListener('click', () => {
+  camera.position.set(7.5, 10.5, 13);
+  controls.target.set(0, 0.4, 0.4);
+  controls.update();
+});
+
+/* ==================================================================
+   13. 初始电路
+   ================================================================== */
+function initCircuit(){
+  const b = addCompRaw('battery',    -3.7, 0);
+  const s = addCompRaw('switch',     -1.5, 0);
+  const r = addCompRaw('resistor',    1.3, 0);
+  const a = addCompRaw('ammeter',     3.8, 0);
+  const v = addCompRaw('voltmeter',   1.3, 2.6);
+
+  wires.push({ id: wireId++, a: { cid: b.id, ti: 1 }, b: { cid: s.id, ti: 0 } });
+  wires.push({ id: wireId++, a: { cid: s.id, ti: 1 }, b: { cid: r.id, ti: 0 } });
+  wires.push({ id: wireId++, a: { cid: r.id, ti: 1 }, b: { cid: a.id, ti: 0 } });
+  wires.push({ id: wireId++, a: { cid: a.id, ti: 1 }, b: { cid: b.id, ti: 0 } });
+  wires.push({ id: wireId++, a: { cid: v.id, ti: 0 }, b: { cid: r.id, ti: 0 } });
+  wires.push({ id: wireId++, a: { cid: v.id, ti: 1 }, b: { cid: r.id, ti: 1 } });
+}
+
+/* ==================================================================
+   14. 渲染循环与自适应
+   ================================================================== */
+function onResize(){
+  const w = stage.clientWidth;
+  const h = stage.clientHeight;
+  if(w === 0 || h === 0) return;
+
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+
+  renderer.setSize(w, h);
+  labelRenderer.setSize(w, h);
+}
+
+window.addEventListener('resize', onResize);
+
+function animate(){
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+
+/* ==================================================================
+   15. 启动
+   ================================================================== */
+initCircuit();
+onResize();
+renderInspector();
+refresh();
+animate();
+
+window.__appReady = true;
+const loadingEl = document.getElementById('loading');
+if(loadingEl){
+  loadingEl.classList.add('hide');
+  setTimeout(() => { if(loadingEl.parentNode) loadingEl.parentNode.removeChild(loadingEl); }, 500);
+}
+
+setTimeout(() => toast('欢迎使用 3D 自由电学实验室'), 500);
+
+</script>
+</body>
+</html>
